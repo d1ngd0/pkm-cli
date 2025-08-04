@@ -1,0 +1,15 @@
+[package]
+name = "pkm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = "0.4.41"
+clap = { version = "4.5.42", features = ["derive", "env"] }
+convert_case = "0.8.0"
+hex = "0.4.3"
+log = "0.4.27"
+sha1 = "0.10.6"
+tantivy = "0.24.2"
+tera = "1.20.0"
+thiserror = "2.0.12"

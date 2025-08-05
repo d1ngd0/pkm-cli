@@ -62,18 +62,8 @@ impl ZettelBuilder {
 
         template.push_str(".md");
 
-        let mut template_path = PathBuf::from("zettel");
-        template_path.push(template);
-
         let f = File::create(destination)?;
-        tera.render_to(
-            &template_path
-                .as_path()
-                .to_str()
-                .expect("template path is not valid unicode"),
-            context,
-            &f,
-        )?;
+        tera.render_to(&template, context, &f)?;
         f.sync_all()?;
         Ok(())
     }

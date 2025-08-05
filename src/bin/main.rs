@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use chrono::Local;
 use clap::{ArgMatches, Command, arg};
 use log::error;
 use pkm::{Editor, Result, ZettelBuilder, ZettelPathBuf};
+use tera::Context;
 
 fn cli() -> Command {
     Command::new("pkm")
@@ -15,11 +17,18 @@ fn cli() -> Command {
                 .about("Create a new zettel")
                 .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels"))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
-                .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel"))
+                .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
                 .arg(arg!(EDIT: -e --edit "Open the zettel in your $EDITOR after creation"))
                 .arg(arg!(TITLE: <TITLE> "The title of the zettel"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
-                .arg_required_else_help(true),
+        )
+        .subcommand(
+            Command::new("daily")
+                .about("open the daily file")
+                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily"))
+                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
+                .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
+                .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
         .subcommand(Command::new("search").about("Finds your relavent data"))
 }
@@ -34,6 +43,10 @@ fn main() {
             sub_matches,
             matches.get_one::<String>("REPO").expect("required"),
         ),
+        Some(("daily", sub_matches)) => run_daily(
+            sub_matches,
+            matches.get_one::<String>("REPO").expect("required"),
+        ),
 
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
@@ -43,22 +56,38 @@ fn main() {
     }
 }
 
+// build_zettel_context will build the context to create a new zettel from a template
+fn build_context_args(args: &ArgMatches) -> Context {
+    let mut context = tera::Context::new();
+    // add the title
+
+    if let Some(vars) = args.get_many::<String>("VARS") {
+        for value in vars {
+            if let Some((key, value)) = value.split_once(":") {
+                context.insert(key, value);
+            }
+        }
+    }
+
+    context
+}
+
+fn template_dir_path<P>(repo: P, args: &ArgMatches) -> PathBuf
+where
+    P: AsRef<Path>,
+{
+    let mut template_dir = PathBuf::new();
+    template_dir.push(repo.as_ref());
+    template_dir.push(args.get_one::<String>("TEMPLATE_DIR").expect("defaulted"));
+    template_dir
+}
+
 fn run_zettel<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let mut context = tera::Context::new();
     let title = sub_matches.get_one::<String>("TITLE").expect("required");
-    // add the title
-    context.insert("title", title);
-
-    if let Some(vars) = sub_matches.get_many::<String>("VARS") {
-        for value in vars {
-            if let Some((key, value)) = value.split_once(":") {
-                context.insert(key, value)
-            }
-        }
-    }
+    let current_date = Local::now();
 
     // destination starts with the path to the repo
     let mut destination = PathBuf::new();
@@ -71,18 +100,13 @@ where
     );
 
     // the date directory structure
-    destination.push_date_path();
+    destination.push_year_month_day(current_date);
     // the name of the file
     destination.filename_with_hash(title);
 
-    let mut template_dir = PathBuf::new();
-    template_dir.push(repo.as_ref());
-
-    template_dir.push(
-        sub_matches
-            .get_one::<String>("TEMPLATE_DIR")
-            .expect("defaulted"),
-    );
+    let template_dir = template_dir_path(repo, sub_matches);
+    let mut context = build_context_args(sub_matches);
+    context.insert("title", title);
 
     ZettelBuilder::new(destination.as_path(), template_dir.as_path())
         .template(sub_matches.get_one::<String>("TEMPLATE"))
@@ -96,6 +120,45 @@ where
             destination.as_path().to_string_lossy()
         )
     }
+
+    Ok(())
+}
+
+fn run_daily<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let current_date = Local::now();
+
+    // destination starts with the path to the repo
+    let mut destination = PathBuf::new();
+    destination.push(repo.as_ref());
+    // then add the zettel directory
+    destination.push(
+        sub_matches
+            .get_one::<String>("DAILY_DIR")
+            .expect("defaulted"),
+    );
+
+    // the date directory structure
+    destination.push_year_month(current_date);
+    // the name of the file
+    destination.filename_with_date(current_date);
+
+    // if the file already exists just open it and return early
+    if destination.as_path().exists() {
+        Editor::new_from_env("EDITOR").file(destination).exec()?;
+        return Ok(());
+    }
+
+    let template_dir = template_dir_path(repo, sub_matches);
+    let context = build_context_args(sub_matches);
+
+    ZettelBuilder::new(destination.as_path(), template_dir.as_path())
+        .template(sub_matches.get_one::<String>("TEMPLATE"))
+        .build(&context)?;
+
+    Editor::new_from_env("EDITOR").file(destination).exec()?;
 
     Ok(())
 }

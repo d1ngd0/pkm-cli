@@ -1,11 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use chrono::Datelike;
 use clap::{ArgMatches, Command, arg};
-use convert_case::{Case, Casing};
 use log::error;
-use pkm::{Result, ZettelBuilder};
-use sha1::{Digest, Sha1};
+use pkm::{Editor, Result, ZettelBuilder, ZettelPathBuf};
 
 fn cli() -> Command {
     Command::new("pkm")
@@ -16,9 +13,10 @@ fn cli() -> Command {
         .subcommand(
             Command::new("zettel")
                 .about("Create a new zettel")
-                .arg(arg!(ZETTEL_DIR: -z --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels"))
+                .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels"))
+                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel"))
-                .arg(arg!(-e --edit [EDIT] "Open the zettel in your $EDITOR after creation"))
+                .arg(arg!(EDIT: -e --edit "Open the zettel in your $EDITOR after creation"))
                 .arg(arg!(TITLE: <TITLE> "The title of the zettel"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
                 .arg_required_else_help(true),
@@ -27,6 +25,8 @@ fn cli() -> Command {
 }
 
 fn main() {
+    env_logger::init();
+
     let matches = cli().get_matches();
 
     let res = match matches.subcommand() {
@@ -41,8 +41,6 @@ fn main() {
     if let Err(err) = res {
         error!("{}", err)
     }
-
-    // Continued program logic goes here...
 }
 
 fn run_zettel<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
@@ -64,32 +62,40 @@ where
 
     // destination starts with the path to the repo
     let mut destination = PathBuf::new();
-    destination.push(repo);
+    destination.push(repo.as_ref());
     // then add the zettel directory
     destination.push(
         sub_matches
             .get_one::<String>("ZETTEL_DIR")
             .expect("defaulted"),
     );
+
     // the date directory structure
-    let current_date = chrono::Utc::now();
-    destination.push(current_date.year().to_string());
-    destination.push(current_date.month().to_string());
-    destination.push(current_date.day().to_string());
+    destination.push_date_path();
     // the name of the file
-    let mut id = title.to_case(Case::Snake);
-    id.push_str("-");
+    destination.filename_with_hash(title);
 
-    let mut hash = Sha1::new();
-    hash.update(current_date.to_rfc3339().as_bytes());
-    let hash = hex::encode(hash.finalize()).to_string();
-    id.push_str(&hash[0..8]);
-    id.push_str(".md");
-    destination.push(&id);
+    let mut template_dir = PathBuf::new();
+    template_dir.push(repo.as_ref());
 
-    ZettelBuilder::new(destination.as_path())
+    template_dir.push(
+        sub_matches
+            .get_one::<String>("TEMPLATE_DIR")
+            .expect("defaulted"),
+    );
+
+    ZettelBuilder::new(destination.as_path(), template_dir.as_path())
         .template(sub_matches.get_one::<String>("TEMPLATE"))
-        .build(&context)
+        .build(&context)?;
 
-    // TODO: open the editor if the user wants to
+    if let Some(true) = sub_matches.get_one::<bool>("EDIT") {
+        Editor::new_from_env("EDITOR").file(destination).exec()?;
+    } else {
+        println!(
+            "created zettel: {}",
+            destination.as_path().to_string_lossy()
+        )
+    }
+
+    Ok(())
 }

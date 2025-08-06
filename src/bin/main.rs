@@ -9,9 +9,7 @@ use tera::Context;
 fn cli() -> Command {
     Command::new("pkm")
         .about("A PKM management CLI")
-        .subcommand_required(true)
-        .arg_required_else_help(true)
-        .arg(arg!(REPO: <REPO> "The root directory of the pkm").env("PKM_REPO"))
+        .arg(arg!(REPO: -r --repo <REPO> "The root directory of the pkm").env("PKM_REPO"))
         .subcommand(
             Command::new("zettel")
                 .about("Create a new zettel")
@@ -40,17 +38,12 @@ fn main() {
     env_logger::init();
 
     let matches = cli().get_matches();
+    let repo = matches.get_one::<String>("REPO").expect("required");
 
     let res = match matches.subcommand() {
-        Some(("zettel", sub_matches)) => run_zettel(
-            sub_matches,
-            matches.get_one::<String>("REPO").expect("required"),
-        ),
-        Some(("daily", sub_matches)) => run_daily(
-            sub_matches,
-            matches.get_one::<String>("REPO").expect("required"),
-        ),
-
+        Some(("zettel", sub_matches)) => run_zettel(sub_matches, &repo),
+        Some(("daily", sub_matches)) => run_daily(sub_matches, &repo),
+        None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
 
@@ -83,6 +76,16 @@ where
     template_dir.push(repo.as_ref());
     template_dir.push(args.get_one::<String>("TEMPLATE_DIR").expect("defaulted"));
     template_dir
+}
+
+fn run_editor<P>(_matches: &ArgMatches, repo: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    Editor::new_from_env("EDITOR", repo.as_ref())
+        .file("README.md")
+        .exec()?;
+    Ok(())
 }
 
 fn run_zettel<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>

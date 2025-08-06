@@ -6,6 +6,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 // Error is the main error
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("{0}")]
+    InvalidZettelID(String),
+
     #[error("command line parsing error: {0}")]
     CommandError(#[from] clap::Error),
 

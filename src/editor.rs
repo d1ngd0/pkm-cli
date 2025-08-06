@@ -10,20 +10,27 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new(editor: &str) -> Self {
+    pub fn new<P>(editor: &str, root: P) -> Self
+    where
+        P: AsRef<Path>,
+    {
         let mut command = Command::new(editor);
 
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::inherit())
+            .current_dir(root);
 
         Editor { command }
     }
 
-    pub fn new_from_env(env: &str) -> Self {
+    pub fn new_from_env<P>(env: &str, root: P) -> Self
+    where
+        P: AsRef<Path>,
+    {
         let editor = env::var(env).unwrap_or_else(|_| "vim".to_string());
-        Self::new(&editor)
+        Self::new(&editor, root)
     }
 
     pub fn file<P>(mut self, arg: P) -> Self

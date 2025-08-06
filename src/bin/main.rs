@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use chrono::Local;
 use clap::{ArgMatches, Command, arg};
 use log::error;
-use pkm::{Editor, Result, ZettelBuilder, ZettelPathBuf};
+use pkm::{Editor, Result, ZettelBuilder, ZettelIDBuilder, ZettelPathBuf};
 use tera::Context;
 
 fn cli() -> Command {
@@ -18,7 +18,10 @@ fn cli() -> Command {
                 .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels"))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
-                .arg(arg!(EDIT: -e --edit "Open the zettel in your $EDITOR after creation"))
+                .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
+                .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
+                .arg(arg!(DATE: --date "put the date into the filename"))
+                .arg(arg!(NO_EDIT: --no-edit "Do not open in an editor once created"))
                 .arg(arg!(TITLE: <TITLE> "The title of the zettel"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
@@ -86,8 +89,8 @@ fn run_zettel<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let title = sub_matches.get_one::<String>("TITLE").expect("required");
     let current_date = Local::now();
+    let mut context = build_context_args(sub_matches);
 
     // destination starts with the path to the repo
     let mut destination = PathBuf::new();
@@ -102,23 +105,52 @@ where
     // the date directory structure
     destination.push_year_month_day(current_date);
     // the name of the file
-    destination.filename_with_hash(title);
+    let mut id = ZettelIDBuilder::new(Some(
+        sub_matches.get_one::<String>("TITLE").expect("required"),
+    ))
+    .with_hash();
 
-    let template_dir = template_dir_path(repo, sub_matches);
-    let mut context = build_context_args(sub_matches);
-    context.insert("title", title);
+    if let Some(true) = sub_matches.get_one::<bool>("MEETING") {
+        id = id.prefix("meeting");
+        id = id.date(current_date)
+    }
+
+    if let Some(true) = sub_matches.get_one::<bool>("FLEETING") {
+        id = id.prefix("fleeting")
+    }
+
+    if let Some(true) = sub_matches.get_one::<bool>("DATE") {
+        id = id.date(current_date)
+    }
+
+    if let Some(date) = id.get_date() {
+        context.insert("daily", date)
+    }
+
+    let id = id.to_string()?;
+
+    destination.push_id(&id);
+
+    let template_dir = template_dir_path(repo.as_ref(), sub_matches);
+
+    context.insert(
+        "title",
+        sub_matches.get_one::<String>("TITLE").expect("required"),
+    );
 
     ZettelBuilder::new(destination.as_path(), template_dir.as_path())
         .template(sub_matches.get_one::<String>("TEMPLATE"))
         .build(&context)?;
 
-    if let Some(true) = sub_matches.get_one::<bool>("EDIT") {
-        Editor::new_from_env("EDITOR").file(destination).exec()?;
-    } else {
+    if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
         println!(
             "created zettel: {}",
             destination.as_path().to_string_lossy()
         )
+    } else {
+        Editor::new_from_env("EDITOR", repo.as_ref())
+            .file(destination)
+            .exec()?;
     }
 
     Ok(())
@@ -143,22 +175,31 @@ where
     // the date directory structure
     destination.push_year_month(current_date);
     // the name of the file
-    destination.filename_with_date(current_date);
+    destination.push_id(
+        ZettelIDBuilder::new(None)
+            .date(current_date)
+            .to_string()?
+            .as_ref(),
+    );
 
     // if the file already exists just open it and return early
     if destination.as_path().exists() {
-        Editor::new_from_env("EDITOR").file(destination).exec()?;
+        Editor::new_from_env("EDITOR", repo.as_ref())
+            .file(destination)
+            .exec()?;
         return Ok(());
     }
 
-    let template_dir = template_dir_path(repo, sub_matches);
+    let template_dir = template_dir_path(repo.as_ref(), sub_matches);
     let context = build_context_args(sub_matches);
 
     ZettelBuilder::new(destination.as_path(), template_dir.as_path())
         .template(sub_matches.get_one::<String>("TEMPLATE"))
         .build(&context)?;
 
-    Editor::new_from_env("EDITOR").file(destination).exec()?;
+    Editor::new_from_env("EDITOR", repo.as_ref())
+        .file(destination)
+        .exec()?;
 
     Ok(())
 }

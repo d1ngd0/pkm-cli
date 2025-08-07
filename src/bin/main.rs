@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+};
 
 use chrono::Local;
 use clap::{ArgMatches, Command, arg};
@@ -31,6 +34,16 @@ fn cli() -> Command {
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
+        .subcommand(
+            Command::new("repo")
+                .about("run git commands")
+                .arg(
+                    arg!(VARS: ... [VARS]) // Accept 1 or more args
+                    .num_args(1..)
+                    .allow_hyphen_values(true)
+                    .trailing_var_arg(true)
+                )
+        )
         .subcommand(Command::new("search").about("Finds your relavent data"))
 }
 
@@ -38,11 +51,12 @@ fn main() {
     env_logger::init();
 
     let matches = cli().get_matches();
-    let repo = matches.get_one::<String>("REPO").expect("required");
+    let repo = matches.get_one::<String>("REPO").expect("repo required");
 
     let res = match matches.subcommand() {
         Some(("zettel", sub_matches)) => run_zettel(sub_matches, &repo),
         Some(("daily", sub_matches)) => run_daily(sub_matches, &repo),
+        Some(("repo", sub_matches)) => run_repo(sub_matches, &repo),
         None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
@@ -109,7 +123,9 @@ where
     destination.push_year_month_day(current_date);
     // the name of the file
     let mut id = ZettelIDBuilder::new(Some(
-        sub_matches.get_one::<String>("TITLE").expect("required"),
+        sub_matches
+            .get_one::<String>("TITLE")
+            .expect("title required"),
     ))
     .with_hash();
 
@@ -138,7 +154,9 @@ where
 
     context.insert(
         "title",
-        sub_matches.get_one::<String>("TITLE").expect("required"),
+        sub_matches
+            .get_one::<String>("TITLE")
+            .expect("title required"),
     );
 
     ZettelBuilder::new(destination.as_path(), template_dir.as_path())
@@ -203,6 +221,25 @@ where
     Editor::new_from_env("EDITOR", repo.as_ref())
         .file(destination)
         .exec()?;
+
+    Ok(())
+}
+
+fn run_repo<P>(matches: &ArgMatches, repo: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    std::process::Command::new("git")
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .current_dir(repo)
+        .args(
+            matches
+                .get_many::<String>("VARS")
+                .expect("arguments required"),
+        )
+        .status()?;
 
     Ok(())
 }

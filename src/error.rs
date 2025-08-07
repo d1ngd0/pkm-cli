@@ -21,6 +21,17 @@ pub enum Error {
     #[error("Templating Error: {0}")]
     TemplatingError(#[from] tera::Error),
 
+    #[error("Markdown Parsing Error: {0:?}")]
+    MarkdownParserError(markdown::message::Message),
+
     #[error("unknown data store error")]
     Unknown,
+}
+
+// For some reason this one didn't work with the #[from] so I
+// had to manually make it. Whatever
+impl From<markdown::message::Message> for Error {
+    fn from(value: markdown::message::Message) -> Self {
+        Self::MarkdownParserError(value)
+    }
 }

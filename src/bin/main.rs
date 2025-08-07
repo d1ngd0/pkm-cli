@@ -1,4 +1,5 @@
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -6,7 +7,8 @@ use std::{
 use chrono::Local;
 use clap::{ArgMatches, Command, arg};
 use log::error;
-use pkm::{Editor, Result, ZettelBuilder, ZettelIDBuilder, ZettelPathBuf};
+use markdown::{ParseOptions, mdast::Node};
+use pkm::{Editor, Result, ZettelBuilder, ZettelIDBuilder, ZettelPathBuf, find_node};
 use tera::Context;
 
 fn cli() -> Command {
@@ -16,19 +18,21 @@ fn cli() -> Command {
         .subcommand(
             Command::new("zettel")
                 .about("Create a new zettel")
+                .alias("ztl")
                 .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels"))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
                 .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
                 .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
                 .arg(arg!(DATE: --date "put the date into the filename"))
-                .arg(arg!(NO_EDIT: --no-edit "Do not open in an editor once created"))
+                .arg(arg!(NO_EDIT: --"no-edit" "Do not open in an editor once created"))
                 .arg(arg!(TITLE: <TITLE> "The title of the zettel"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
         .subcommand(
             Command::new("daily")
                 .about("open the daily file")
+                .alias("day")
                 .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily"))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
@@ -37,12 +41,18 @@ fn cli() -> Command {
         .subcommand(
             Command::new("repo")
                 .about("run git commands")
+                .alias("git")
                 .arg(
-                    arg!(VARS: ... [VARS]) // Accept 1 or more args
+                    arg!(VARS: [VARS]) // Accept 1 or more args
                     .num_args(1..)
                     .allow_hyphen_values(true)
                     .trailing_var_arg(true)
                 )
+        )
+        .subcommand(
+            Command::new("favorites")
+                .about("A list of favorites")
+                .alias("fvt")
         )
         .subcommand(Command::new("search").about("Finds your relavent data"))
 }
@@ -57,6 +67,7 @@ fn main() {
         Some(("zettel", sub_matches)) => run_zettel(sub_matches, &repo),
         Some(("daily", sub_matches)) => run_daily(sub_matches, &repo),
         Some(("repo", sub_matches)) => run_repo(sub_matches, &repo),
+        Some(("favorites", sub_matches)) => run_favorites(sub_matches, &repo),
         None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
@@ -241,5 +252,20 @@ where
         )
         .status()?;
 
+    Ok(())
+}
+
+fn run_favorites<P>(_matches: &ArgMatches, repo: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let mut favorites = PathBuf::from(repo.as_ref());
+    favorites.push("favorites.md");
+    let favorites = fs::read_to_string(favorites.as_path())?;
+
+    let opts = ParseOptions::gfm();
+    let ast = markdown::to_mdast(&favorites, &opts)?;
+    let table = find_node!(&ast, Node::Table);
+    dbg!(table);
     Ok(())
 }

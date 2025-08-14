@@ -89,4 +89,4 @@ impl LSPRuntime {
     }
 }
 
-struct Response {}
+pub struct Response {}

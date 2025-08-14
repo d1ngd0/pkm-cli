@@ -258,6 +258,13 @@ where
     Ok(())
 }
 
+fn run_index<P>(matches: &ArgMatches, repo: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    Ok(())
+}
+
 fn run_favorites<P>(_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,

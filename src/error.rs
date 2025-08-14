@@ -9,6 +9,9 @@ pub enum Error {
     #[error("{0}")]
     InvalidZettelID(String),
 
+    #[error("Not Found: {0}")]
+    NotFound(String),
+
     #[error("command line parsing error: {0}")]
     CommandError(#[from] clap::Error),
 
@@ -23,6 +26,12 @@ pub enum Error {
 
     #[error("Markdown Parsing Error: {0:?}")]
     MarkdownParserError(markdown::message::Message),
+
+    #[error("LSP Error: {0}")]
+    LSPError(String),
+
+    #[error("Serialization Error: {0}")]
+    SerializationError(#[from] serde_json::Error),
 
     #[error("unknown data store error")]
     Unknown,

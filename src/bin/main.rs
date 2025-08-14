@@ -8,7 +8,10 @@ use chrono::Local;
 use clap::{ArgMatches, Command, arg};
 use log::error;
 use markdown::{ParseOptions, mdast::Node};
-use pkm::{Editor, Result, ZettelBuilder, ZettelIDBuilder, ZettelPathBuf, find_node};
+use pkm::{
+    Editor, Error, Result, ZettelBuilder, ZettelIDBuilder, ZettelPathBuf, first_node,
+    first_within_child,
+};
 use tera::Context;
 
 fn cli() -> Command {
@@ -265,7 +268,25 @@ where
 
     let opts = ParseOptions::gfm();
     let ast = markdown::to_mdast(&favorites, &opts)?;
-    let table = find_node!(&ast, Node::Table);
-    dbg!(table);
+    let table = first_node!(&ast, Node::Table).ok_or(Error::NotFound(String::from(
+        "could not find table in favorites",
+    )))?;
+
+    let mut iter = table.children.iter();
+    iter.next()
+        .ok_or(Error::NotFound(String::from("favorite expected a header")))?; // drop the header
+
+    for row in iter {
+        if let Node::TableRow(row) = row {
+            let zettel = first_within_child!(0, row, Node::Text).ok_or(Error::NotFound(
+                String::from("could not get zettel from favorites"),
+            ))?;
+            let description = first_within_child!(1, row, Node::Text).ok_or(Error::NotFound(
+                String::from("could not get description from favorites"),
+            ))?;
+
+            println!("{} :: {}", zettel.value, description.value)
+        }
+    }
     Ok(())
 }

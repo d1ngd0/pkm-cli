@@ -18,6 +18,9 @@ pub enum Error {
     #[error("indexing error: {0}")]
     IndexError(#[from] tantivy::TantivyError),
 
+    #[error("indexing error: {0}")]
+    OpenDirectoryError(#[from] tantivy::directory::error::OpenDirectoryError),
+
     #[error("IO Error: {0}")]
     IOError(#[from] std::io::Error),
 

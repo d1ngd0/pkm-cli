@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     process::Stdio,
@@ -9,10 +10,11 @@ use clap::{ArgMatches, Command, arg};
 use log::error;
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
-    Editor, Error, Result, ZettelBuilder, ZettelIDBuilder, ZettelPathBuf, first_node,
-    first_within_child,
+    Editor, Error, Result, ZettelBuilder, ZettelIDBuilder, ZettelIndex, ZettelPathBuf, first_node,
+    first_within_child, path_to_id,
 };
 use tera::Context;
+use walkdir::WalkDir;
 
 fn cli() -> Command {
     Command::new("pkm")
@@ -57,6 +59,10 @@ fn cli() -> Command {
                 .about("A list of favorites")
                 .alias("fvt")
         )
+        .subcommand(
+            Command::new("index")
+                .about("Index the data")
+        )
         .subcommand(Command::new("search").about("Finds your relavent data"))
 }
 
@@ -71,6 +77,7 @@ fn main() {
         Some(("daily", sub_matches)) => run_daily(sub_matches, &repo),
         Some(("repo", sub_matches)) => run_repo(sub_matches, &repo),
         Some(("favorites", sub_matches)) => run_favorites(sub_matches, &repo),
+        Some(("index", sub_matches)) => run_index(sub_matches, &repo),
         None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
@@ -258,10 +265,39 @@ where
     Ok(())
 }
 
-fn run_index<P>(matches: &ArgMatches, repo: P) -> Result<()>
+// run_index creates/updates the index
+fn run_index<P>(_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
+    let index = ZettelIndex::new(repo.as_ref())?;
+    let mut writer = index.doc_indexer()?;
+
+    // TODO: be smarter
+    writer.clear()?;
+
+    for doc in WalkDir::new(repo.as_ref()) {
+        let doc = match doc {
+            Err(err) => {
+                error!("issue indexing {}", err);
+                continue;
+            }
+            Ok(v) => v,
+        };
+
+        if doc.path().extension() != Some(OsStr::new("md")) {
+            continue;
+        }
+
+        let id = path_to_id(doc.path());
+        writer.process(&id, doc.path()).unwrap_or_else(|err| {
+            error!("could not index document {}", err);
+            ()
+        });
+    }
+
+    writer.commit()?;
+
     Ok(())
 }
 

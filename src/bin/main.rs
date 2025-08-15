@@ -63,7 +63,9 @@ fn cli() -> Command {
             Command::new("index")
                 .about("Index the data")
         )
-        .subcommand(Command::new("search").about("Finds your relavent data"))
+        .subcommand(Command::new("search")
+            .arg(arg!(QUERY: <QUERY> "The search terms you want to find"))
+            .about("Finds your relavent data"))
 }
 
 fn main() {
@@ -78,6 +80,7 @@ fn main() {
         Some(("repo", sub_matches)) => run_repo(sub_matches, &repo),
         Some(("favorites", sub_matches)) => run_favorites(sub_matches, &repo),
         Some(("index", sub_matches)) => run_index(sub_matches, &repo),
+        Some(("search", sub_matches)) => run_search(sub_matches, &repo),
         None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
@@ -298,6 +301,21 @@ where
 
     writer.commit()?;
 
+    Ok(())
+}
+
+fn run_search<P>(matches: &ArgMatches, repo: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let index = ZettelIndex::new(repo.as_ref())?;
+    let docs = index
+        .doc_searcher()?
+        .find(matches.get_one::<String>("QUERY").expect("query required"))?;
+
+    for d in docs {
+        dbg!(d.get_first(field));
+    }
     Ok(())
 }
 

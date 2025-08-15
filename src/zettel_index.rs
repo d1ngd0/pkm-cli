@@ -4,9 +4,11 @@ use std::path::{Path, PathBuf};
 use crate::{Error, Result, first_node};
 use markdown::ParseOptions;
 use markdown::mdast::Node;
+use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
+use tantivy::query::QueryParser;
 use tantivy::schema::{IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions};
-use tantivy::{Index, IndexWriter, TantivyDocument, doc};
+use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, doc};
 
 pub fn path_to_id<P>(path: P) -> String
 where
@@ -88,6 +90,49 @@ impl<P: AsRef<Path>> ZettelIndex<P> {
             index: self,
             writer: self.index.writer(15_000_000)?,
         })
+    }
+
+    pub fn doc_searcher(&self) -> Result<DocSearcher<P>> {
+        Ok(DocSearcher {
+            index: self,
+            reader: self.index.reader()?,
+        })
+    }
+}
+
+pub struct DocSearcher<'a, P: AsRef<Path>> {
+    index: &'a ZettelIndex<P>,
+    reader: IndexReader,
+}
+
+impl<'a, P: AsRef<Path>> DocSearcher<'a, P> {
+    pub fn find(&self, query: &str) -> Result<Vec<TantivyDocument>> {
+        let parser = QueryParser::for_index(
+            &self.index.index,
+            vec![
+                self.index
+                    .index
+                    .schema()
+                    .get_field("title")
+                    .expect("title not part of schema"),
+                self.index
+                    .index
+                    .schema()
+                    .get_field("content")
+                    .expect("content not part of schema"),
+            ],
+        );
+
+        let query = parser.parse_query(query)?;
+
+        let searcher = self.reader.searcher();
+
+        let docs = searcher.search(&query, &TopDocs::with_limit(10))?;
+        Ok(docs
+            .into_iter()
+            .map(move |v| searcher.doc::<TantivyDocument>(v.1))
+            .filter_map(|v| v.ok())
+            .collect())
     }
 }
 

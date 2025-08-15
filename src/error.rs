@@ -21,6 +21,9 @@ pub enum Error {
     #[error("indexing error: {0}")]
     OpenDirectoryError(#[from] tantivy::directory::error::OpenDirectoryError),
 
+    #[error("indexing error: {0}")]
+    QueryError(#[from] tantivy::query::QueryParserError),
+
     #[error("IO Error: {0}")]
     IOError(#[from] std::io::Error),
 

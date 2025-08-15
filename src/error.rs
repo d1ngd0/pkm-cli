@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use skim::SkimItem;
 use thiserror::Error;
 
 // Result is a convienince type for T, pkm::Error
@@ -26,6 +29,12 @@ pub enum Error {
 
     #[error("IO Error: {0}")]
     IOError(#[from] std::io::Error),
+
+    #[error("Sending Error {0}")]
+    ChannelSendError(#[from] crossbeam_channel::SendError<Arc<dyn SkimItem>>),
+
+    #[error("Receiver Error {0}")]
+    ChannelReceiverError(#[from] crossbeam_channel::RecvError),
 
     #[error("Templating Error: {0}")]
     TemplatingError(#[from] tera::Error),

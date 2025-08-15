@@ -10,8 +10,8 @@ use clap::{ArgMatches, Command, arg};
 use log::error;
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
-    Editor, Error, Result, ZettelBuilder, ZettelIDBuilder, ZettelIndex, ZettelPathBuf, first_node,
-    first_within_child, path_to_id,
+    Editor, Error, Finder, FinderItem, Result, ZettelBuilder, ZettelIDBuilder, ZettelIndex,
+    ZettelPathBuf, first_node, first_within_child, path_to_id,
 };
 use tera::Context;
 use walkdir::WalkDir;
@@ -313,9 +313,16 @@ where
         .doc_searcher()?
         .find(matches.get_one::<String>("QUERY").expect("query required"))?;
 
-    for d in docs {
-        dbg!(d.get_first(field));
+    let mut finder = Finder::new(repo.as_ref());
+    for doc in docs {
+        finder.add(FinderItem::new(
+            repo.as_ref(),
+            doc.get("uri").expect("schema should have uri"),
+        ))?;
     }
+
+    finder.run()?;
+
     Ok(())
 }
 

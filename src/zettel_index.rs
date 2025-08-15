@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::{self, read_to_string};
 use std::path::{Path, PathBuf};
 
@@ -7,7 +8,7 @@ use markdown::mdast::Node;
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
-use tantivy::schema::{IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions};
+use tantivy::schema::{IndexRecordOption, SchemaBuilder, TextFieldIndexing, TextOptions, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, doc};
 
 pub fn path_to_id<P>(path: P) -> String
@@ -106,15 +107,18 @@ pub struct DocSearcher<'a, P: AsRef<Path>> {
 }
 
 impl<'a, P: AsRef<Path>> DocSearcher<'a, P> {
-    pub fn find(&self, query: &str) -> Result<Vec<TantivyDocument>> {
+    pub fn find(&self, query: &str) -> Result<Vec<HashMap<String, String>>> {
+        let title_field = self
+            .index
+            .index
+            .schema()
+            .get_field("title")
+            .expect("title not part of schema");
+
         let parser = QueryParser::for_index(
             &self.index.index,
             vec![
-                self.index
-                    .index
-                    .schema()
-                    .get_field("title")
-                    .expect("title not part of schema"),
+                title_field,
                 self.index
                     .index
                     .schema()
@@ -126,12 +130,23 @@ impl<'a, P: AsRef<Path>> DocSearcher<'a, P> {
         let query = parser.parse_query(query)?;
 
         let searcher = self.reader.searcher();
+        let searcher_ref = &searcher;
 
         let docs = searcher.search(&query, &TopDocs::with_limit(10))?;
+        // this is so fucking ugly
         Ok(docs
             .into_iter()
-            .map(move |v| searcher.doc::<TantivyDocument>(v.1))
+            .map(|v| searcher_ref.doc::<TantivyDocument>(v.1))
             .filter_map(|v| v.ok())
+            .map(|v| {
+                let mut map: HashMap<String, String> = HashMap::new();
+                for (key, value) in v.field_values() {
+                    let key = searcher_ref.schema().get_field_name(key);
+                    let value = value.as_str().expect("they are all strings");
+                    map.insert(String::from(key), String::from(value));
+                }
+                map
+            })
             .collect())
     }
 }
@@ -175,7 +190,7 @@ impl<'a, P: AsRef<Path>> DocIndexer<'a, P> {
             self.writer.index().schema().get_field("title").expect("title not in schema") => title,
             self.writer.index().schema().get_field("content").expect("content not in schema")  => content,
             self.writer.index().schema().get_field("uri").expect("uri not in schema")  => *doc.as_ref().to_string_lossy(),
-            self.writer.index().schema().get_field("uri").expect("id not in schema")  => id,
+            self.writer.index().schema().get_field("id").expect("id not in schema")  => id,
         ))?;
 
         Ok(())

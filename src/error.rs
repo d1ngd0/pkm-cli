@@ -15,6 +15,9 @@ pub enum Error {
     #[error("Not Found: {0}")]
     NotFound(String),
 
+    #[error("prompt error: {0}")]
+    PromptError(#[from] inquire::error::InquireError),
+
     #[error("command line parsing error: {0}")]
     CommandError(#[from] clap::Error),
 

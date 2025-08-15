@@ -1,12 +1,13 @@
 use std::{
     ffi::OsStr,
-    fs,
+    fs::{self, read_to_string},
     path::{Path, PathBuf},
     process::Stdio,
 };
 
 use chrono::Local;
 use clap::{ArgMatches, Command, arg};
+use inquire::Text;
 use log::error;
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
@@ -64,7 +65,6 @@ fn cli() -> Command {
                 .about("Index the data")
         )
         .subcommand(Command::new("search")
-            .arg(arg!(QUERY: <QUERY> "The search terms you want to find"))
             .about("Finds your relavent data"))
 }
 
@@ -304,24 +304,39 @@ where
     Ok(())
 }
 
-fn run_search<P>(matches: &ArgMatches, repo: P) -> Result<()>
+fn run_search<P>(_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
     let index = ZettelIndex::new(repo.as_ref())?;
-    let docs = index
-        .doc_searcher()?
-        .find(matches.get_one::<String>("QUERY").expect("query required"))?;
+    loop {
+        let query = Text::new(" >").with_placeholder("Query").prompt()?;
+        let docs = match index.doc_searcher()?.find(&query) {
+            Ok(v) => v,
+            Err(err) => {
+                error!("oops: {}", err);
+                continue;
+            }
+        };
 
-    let mut finder = Finder::new(repo.as_ref());
-    for doc in docs {
-        finder.add(FinderItem::new(
-            repo.as_ref(),
-            doc.get("uri").expect("schema should have uri"),
-        ))?;
+        let mut finder = Finder::new(repo.as_ref());
+        for doc in docs {
+            let mut full_path = PathBuf::from(repo.as_ref());
+            full_path.push(doc.get("uri").expect("schema should have uri"));
+
+            let content = read_to_string(&full_path)?;
+
+            finder.add(
+                FinderItem::new(doc.get("uri").expect("schema should have uri"))
+                    .with_display(doc.get("title"))
+                    .with_syntax_preview(&content, Some("md"), None)?,
+            )?;
+        }
+
+        if finder.run()? {
+            break;
+        }
     }
-
-    finder.run()?;
 
     Ok(())
 }

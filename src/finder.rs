@@ -1,7 +1,6 @@
-use crate::{Editor, Result};
+use crate::{Editor, Highlighting, Result};
 use std::{
     borrow::Cow,
-    fs::read_to_string,
     path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
@@ -38,7 +37,8 @@ impl<P: AsRef<Path>> Finder<P> {
         Ok(self.sender.send(Arc::new(item.into()))?)
     }
 
-    pub fn run(self) -> Result<ExitStatus> {
+    // run runs the finder and returns if we ran the editor
+    pub fn run(self) -> Result<bool> {
         let Self {
             repo,
             options,
@@ -49,15 +49,15 @@ impl<P: AsRef<Path>> Finder<P> {
         let selections = Skim::run_with(&options, Some(receiver));
         let selections = match selections {
             Some(m) => m,
-            None => return Ok(ExitStatus::default()),
+            None => return Ok(false),
         };
 
         if selections.is_abort {
-            return Ok(ExitStatus::default());
+            return Ok(false);
         }
 
         if selections.selected_items.len() == 0 {
-            return Ok(ExitStatus::default());
+            return Ok(false);
         }
 
         let mut editor = Editor::new_from_env("EDITOR", repo);
@@ -66,21 +66,49 @@ impl<P: AsRef<Path>> Finder<P> {
             editor = editor.file(PathBuf::from(f.text().as_ref()))
         }
 
-        editor.exec()
+        editor.exec()?;
+        Ok(true)
     }
 }
 
 pub struct FinderItem {
-    root: PathBuf,
     path: PathBuf,
+    preview: Option<ItemPreview>,
+    display: Option<String>,
 }
 
 impl FinderItem {
-    pub fn new<A: Into<PathBuf>, B: Into<PathBuf>>(root: A, path: B) -> Self {
+    pub fn new<B: Into<PathBuf>>(path: B) -> Self {
         Self {
-            root: root.into(),
             path: path.into(),
+            preview: None,
+            display: None,
         }
+    }
+
+    pub fn with_display<S: Into<String>>(mut self, display: Option<S>) -> Self {
+        self.display = display.map(|v| v.into());
+        self
+    }
+
+    pub fn with_preview<S: Into<String>>(mut self, preview: Option<S>) -> Self {
+        self.preview = preview.map(|v| ItemPreview::Text(v.into()));
+        self
+    }
+
+    pub fn with_syntax_preview(
+        mut self,
+        content: &str,
+        ext: Option<&str>,
+        theme: Option<&str>,
+    ) -> Result<Self> {
+        self.preview = Some(ItemPreview::AnsiText(
+            Highlighting::new()
+                .syntax(ext)
+                .theme(theme)
+                .highlight(content)?,
+        ));
+        Ok(self)
     }
 }
 
@@ -89,14 +117,26 @@ impl SkimItem for FinderItem {
         self.path.as_path().to_string_lossy()
     }
 
-    fn preview(&self, _context: skim::PreviewContext) -> skim::ItemPreview {
-        let mut full_path = PathBuf::new();
-        full_path.push(&self.root);
-        full_path.push(&self.path);
+    fn display<'a>(&'a self, _context: skim::DisplayContext<'a>) -> skim::AnsiString<'a> {
+        let display = self.display.clone();
+        display.unwrap_or_else(|| self.text().into()).into()
+    }
 
-        let s = read_to_string(full_path)
-            .unwrap_or_else(|err| format!("error getting display: {}", err));
-        // change this to item with position
-        ItemPreview::Text(s)
+    fn preview(&self, _context: skim::PreviewContext) -> skim::ItemPreview {
+        match self.preview.as_ref() {
+            Some(ip) => match ip {
+                // wish they would implement clone on ItemPreview
+                ItemPreview::Command(s) => ItemPreview::Command(s.clone()),
+                ItemPreview::CommandWithPos(s, p) => {
+                    ItemPreview::CommandWithPos(s.clone(), p.clone())
+                }
+                ItemPreview::Text(s) => ItemPreview::Text(s.clone()),
+                ItemPreview::TextWithPos(s, p) => ItemPreview::TextWithPos(s.clone(), p.clone()),
+                ItemPreview::AnsiText(s) => ItemPreview::AnsiText(s.clone()),
+                ItemPreview::AnsiWithPos(s, p) => ItemPreview::AnsiWithPos(s.clone(), p.clone()),
+                ItemPreview::Global => ItemPreview::Global,
+            },
+            _ => ItemPreview::Text(String::from("no display provided")),
+        }
     }
 }

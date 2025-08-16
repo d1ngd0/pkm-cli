@@ -12,7 +12,7 @@ use log::error;
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
     Editor, Error, Finder, FinderItem, Result, ZettelBuilder, ZettelIDBuilder, ZettelIndex,
-    ZettelPathBuf, first_node, first_within_child, path_to_id,
+    ZettelPathBuf, first_node, first_within_child, lsp::StandardRunnerBuilder, path_to_id,
 };
 use tera::Context;
 use walkdir::WalkDir;
@@ -345,6 +345,8 @@ fn run_favorites<P>(_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
+    let mut builder = StandardRunnerBuilder::new("markdown-oxide").something();
+
     let mut favorites = PathBuf::from(repo.as_ref());
     favorites.push("favorites.md");
     let favorites = fs::read_to_string(favorites.as_path())?;

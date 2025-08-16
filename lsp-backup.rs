@@ -1,17 +1,18 @@
 use std::{
     ffi::OsStr,
-    io::Write,
+    io::{self, Write},
+    marker::PhantomData,
     path::Path,
     process::{Child, Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use lsp_types::{
-    GotoDefinitionParams, PartialResultParams, Position, TextDocumentIdentifier,
-    TextDocumentPositionParams, Uri, WorkDoneProgressParams,
+    GotoDefinitionParams, GotoDefinitionResponse, PartialResultParams, Position,
+    TextDocumentIdentifier, TextDocumentPositionParams, Uri, WorkDoneProgressParams,
     request::{GotoDefinition, Request},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{Error, Result};
@@ -44,7 +45,12 @@ impl LSPRuntime {
     }
 
     // goto_defintion returns a response for the GotoDefinition function
-    pub fn goto_defintion<U>(&mut self, uri: U, line: u32, character: u32) -> Result<()>
+    pub fn goto_defintion<U>(
+        &mut self,
+        uri: U,
+        line: u32,
+        character: u32,
+    ) -> Result<GotoDefinitionResponse>
     where
         U: Into<Uri>,
     {
@@ -61,8 +67,7 @@ impl LSPRuntime {
             },
         };
 
-        self.request(GotoDefinition::METHOD, Box::new(params))?;
-        Ok(())
+        Ok(self.request(GotoDefinition::METHOD, Box::new(params))?);
     }
 
     // next_id returns the next request id
@@ -71,7 +76,11 @@ impl LSPRuntime {
     }
 
     // request sends a request to the backend
-    fn request(&mut self, method: &'static str, params: Box<impl Serialize>) -> Result<()> {
+    fn request<P: Serialize, R: Deserialize<'static>>(
+        &mut self,
+        method: &'static str,
+        params: P,
+    ) -> Result<R> {
         let body = serde_json::to_string(&json!({
             "jsonrpc": "2.0",
             "id": self.next_id(),
@@ -85,8 +94,14 @@ impl LSPRuntime {
             .as_mut()
             .ok_or(Error::LSPError(String::from("stdin went away")))?;
         write!(stdin, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
-        Ok(())
-    }
-}
 
-pub struct Response {}
+        response_from_reader(
+            self.lsp_child
+                .stdout
+                .as_mut()
+                .ok_or(Error::LSPError(String::from("stdout went away")))?,
+        );
+    }
+
+    fn response_from_reader<R: io::Read, D: Deserialize<'static>>(reader: R) -> Result<D> {}
+}

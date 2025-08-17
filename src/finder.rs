@@ -70,7 +70,7 @@ impl<P: AsRef<Path>> Finder<P> {
         self.add(
             FinderItem::new(path.as_ref())
                 .with_display(title)
-                .with_preview(Some(content)),
+                .with_syntax_preview(&content, Some("md"), None)?,
         )
     }
 

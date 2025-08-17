@@ -9,10 +9,13 @@ use chrono::Local;
 use clap::{ArgMatches, Command, arg};
 use inquire::Text;
 use log::error;
+use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
     Editor, Error, Finder, FinderItem, Result, ZettelBuilder, ZettelIDBuilder, ZettelIndex,
-    ZettelPathBuf, first_node, first_within_child, lsp::StandardRunnerBuilder, path_to_id,
+    ZettelPathBuf, first_node, first_within_child,
+    lsp::{LSP, StandardRunnerBuilder},
+    path_to_id,
 };
 use tera::Context;
 use walkdir::WalkDir;
@@ -345,14 +348,17 @@ fn run_favorites<P>(_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let mut builder = StandardRunnerBuilder::new("markdown-oxide").something();
+    let runner = StandardRunnerBuilder::new("markdown-oxide")
+        .working_dir(repo.as_ref())
+        .spawn()?;
+    let mut lsp = LSP::new(runner, repo.as_ref())?;
 
     let mut favorites = PathBuf::from(repo.as_ref());
     favorites.push("favorites.md");
-    let favorites = fs::read_to_string(favorites.as_path())?;
+    let fcontent = fs::read_to_string(favorites.as_path())?;
 
     let opts = ParseOptions::gfm();
-    let ast = markdown::to_mdast(&favorites, &opts)?;
+    let ast = markdown::to_mdast(&fcontent, &opts)?;
     let table = first_node!(&ast, Node::Table).ok_or(Error::NotFound(String::from(
         "could not find table in favorites",
     )))?;
@@ -361,17 +367,32 @@ where
     iter.next()
         .ok_or(Error::NotFound(String::from("favorite expected a header")))?; // drop the header
 
+    let mut finder = Finder::new(repo.as_ref());
     for row in iter {
         if let Node::TableRow(row) = row {
             let zettel = first_within_child!(0, row, Node::Text).ok_or(Error::NotFound(
                 String::from("could not get zettel from favorites"),
             ))?;
-            let description = first_within_child!(1, row, Node::Text).ok_or(Error::NotFound(
-                String::from("could not get description from favorites"),
-            ))?;
 
-            println!("{} :: {}", zettel.value, description.value)
+            if let Ok(resp) = lsp.goto_defintion(
+                favorites.as_path(),
+                zettel.position.as_ref().unwrap().start.line as u32 - 1,
+                zettel.position.as_ref().unwrap().start.column as u32 - 1,
+            ) {
+                match resp {
+                    Scalar(location) => finder.add_fq_doc(location.uri)?,
+                    Array(locations) => {
+                        for location in locations {
+                            finder.add_fq_doc(location.uri)?;
+                        }
+                    }
+                    Link(_) => (),
+                }
+            }
         }
     }
+
+    finder.run()?;
+
     Ok(())
 }

@@ -1,12 +1,14 @@
-use crate::{Editor, Highlighting, Result};
+use crate::{Editor, Error, Highlighting, Result, first_node};
 use std::{
     borrow::Cow,
+    fs::read_to_string,
     path::{Path, PathBuf},
-    process::ExitStatus,
     sync::Arc,
 };
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use lsp_types::Uri;
+use markdown::{ParseOptions, mdast::Node};
 use skim::{ItemPreview, Skim, SkimItem, SkimOptions, prelude::SkimOptionsBuilder};
 
 pub struct Finder<P: AsRef<Path>> {
@@ -31,6 +33,45 @@ impl<P: AsRef<Path>> Finder<P> {
             sender,
             receiver,
         }
+    }
+
+    pub fn add_fq_doc(&mut self, path: Uri) -> Result<()> {
+        let path_string = path.to_string();
+        let path = path_string.strip_prefix("file://").unwrap_or(&path_string);
+        let path = path
+            .strip_prefix(
+                self.repo
+                    .as_ref()
+                    .to_str()
+                    .ok_or_else(|| Error::NotFound(String::from("fuck you fluent_uri")))?,
+            )
+            .unwrap_or(path);
+        let path = path.strip_prefix("/").unwrap_or(path);
+
+        self.add_doc(Path::new(path))
+    }
+
+    pub fn add_doc<Q: AsRef<Path>>(&mut self, path: Q) -> Result<()> {
+        let mut full_doc_path = PathBuf::new();
+        full_doc_path.push(self.repo.as_ref());
+        full_doc_path.push(path.as_ref());
+        let content = read_to_string(full_doc_path.as_path())?;
+
+        let opts = ParseOptions::gfm();
+        let ast = markdown::to_mdast(&content, &opts)?;
+
+        let mut title = None;
+        if let Some(header) = first_node!(&ast, Node::Heading) {
+            if let Some(Node::Text(header_content)) = header.children.get(0) {
+                title = Some(header_content.value.as_str());
+            }
+        }
+
+        self.add(
+            FinderItem::new(path.as_ref())
+                .with_display(title)
+                .with_preview(Some(content)),
+        )
     }
 
     pub fn add<F: Into<FinderItem>>(&mut self, item: F) -> Result<()> {

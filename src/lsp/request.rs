@@ -1,5 +1,4 @@
 use serde::{Serialize, ser::SerializeMap};
-use tantivy::columnar::column_index::serialize_column_index;
 
 use super::{RequestID, Result};
 
@@ -10,7 +9,7 @@ pub struct Request<T: Serialize> {
 }
 
 impl<T: Serialize> Request<T> {
-    fn from_serializable(method: &str, value: T) -> Result<Self> {
+    pub fn from_serializable(method: &str, value: T) -> Result<Self> {
         Ok(Request {
             id: 0,
             method: method.into(),

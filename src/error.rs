@@ -46,7 +46,7 @@ pub enum Error {
     MarkdownParserError(markdown::message::Message),
 
     #[error("LSP Error: {0}")]
-    LSPError(String),
+    LSPError(#[from] crate::lsp::Error),
 
     #[error("Serialization Error: {0}")]
     SerializationError(#[from] serde_json::Error),

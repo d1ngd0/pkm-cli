@@ -1,3 +1,5 @@
+use std::{num::ParseIntError, str::Utf8Error};
+
 use thiserror::Error;
 
 // Result is a convienince type for T, pkm::Error
@@ -14,4 +16,13 @@ pub enum Error {
 
     #[error("IO Error: {0}")]
     IOError(#[from] std::io::Error),
+
+    #[error("LSP Error: {0}")]
+    LSPError(String),
+
+    #[error("Could not parse int: {0}")]
+    ParseIntError(#[from] ParseIntError),
+
+    #[error("UTF8 Error {0}")]
+    UTF8Error(#[from] Utf8Error),
 }

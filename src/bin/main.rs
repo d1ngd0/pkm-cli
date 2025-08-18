@@ -69,6 +69,18 @@ fn cli() -> Command {
         )
         .subcommand(Command::new("search")
             .about("Finds your relavent data"))
+
+        .subcommand(
+            Command::new("script")
+                .about("run a helper script in pkm `/scripts` directory")
+                .alias("s")
+                .arg(
+                    arg!(VARS: [VARS]) // Accept 1 or more args
+                    .num_args(1..)
+                    .allow_hyphen_values(true)
+                    .trailing_var_arg(true)
+                )
+        )
 }
 
 fn main() {
@@ -84,6 +96,7 @@ fn main() {
         Some(("favorites", sub_matches)) => run_favorites(sub_matches, &repo),
         Some(("index", sub_matches)) => run_index(sub_matches, &repo),
         Some(("search", sub_matches)) => run_search(sub_matches, &repo),
+        Some(("script", sub_matches)) => run_script(sub_matches, &repo),
         None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
@@ -266,6 +279,29 @@ where
                 .get_many::<String>("VARS")
                 .expect("arguments required"),
         )
+        .status()?;
+
+    Ok(())
+}
+
+fn run_script<P>(matches: &ArgMatches, repo: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let mut arguments = matches
+        .get_many::<String>("VARS")
+        .expect("arguments required")
+        .into_iter();
+
+    let mut command = String::from("./scripts/");
+    command.push_str(arguments.next().expect("required"));
+
+    std::process::Command::new(&command)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .current_dir(repo)
+        .args(arguments)
         .status()?;
 
     Ok(())

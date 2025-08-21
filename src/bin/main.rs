@@ -1,12 +1,14 @@
 use std::{
     ffi::OsStr,
     fs::{self, read_to_string},
+    io::stdout,
     path::{Path, PathBuf},
     process::Stdio,
 };
 
 use chrono::Local;
-use clap::{ArgMatches, Command, arg};
+use clap::{ArgMatches, Command, ValueHint, arg, value_parser};
+use clap_complete::aot::{Shell, generate};
 use inquire::Text;
 use log::error;
 use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
@@ -28,8 +30,8 @@ fn cli() -> Command {
             Command::new("zettel")
                 .about("Create a new zettel")
                 .alias("ztl")
-                .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels"))
-                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
+                .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
+                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
                 .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
                 .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
@@ -42,8 +44,8 @@ fn cli() -> Command {
             Command::new("daily")
                 .about("open the daily file")
                 .alias("day")
-                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily"))
-                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl"))
+                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
+                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
@@ -79,7 +81,15 @@ fn cli() -> Command {
                     .num_args(1..)
                     .allow_hyphen_values(true)
                     .trailing_var_arg(true)
+            )
+        )
+        .subcommand(
+            Command::new("completion")
+                .arg(
+                    arg!(SHELL: --shell <SHELL>)
+                    .value_parser(value_parser!(Shell))
                 )
+                .about("Generate shell completion")
         )
 }
 
@@ -97,6 +107,7 @@ fn main() {
         Some(("index", sub_matches)) => run_index(sub_matches, &repo),
         Some(("search", sub_matches)) => run_search(sub_matches, &repo),
         Some(("script", sub_matches)) => run_script(sub_matches, &repo),
+        Some(("completion", submatches)) => run_completion(submatches),
         None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
@@ -104,6 +115,14 @@ fn main() {
     if let Err(err) = res {
         error!("{}", err)
     }
+}
+
+fn run_completion(args: &ArgMatches) -> Result<()> {
+    let mut cmd = cli();
+    let generator: Shell = args.get_one("SHELL").copied().expect("Required Field");
+    let name = cmd.get_name().to_string();
+    generate(generator, &mut cmd, &name, &mut stdout());
+    Ok(())
 }
 
 // build_zettel_context will build the context to create a new zettel from a template

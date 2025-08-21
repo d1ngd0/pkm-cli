@@ -9,7 +9,8 @@ path = "src/bin/main.rs"
 
 [dependencies]
 chrono = "0.4.41"
-clap = { version = "4.5.42", features = ["derive", "env"] }
+clap = { version = "4.5.42", features = ["derive", "env", ] }
+clap_complete = {version = "4.5.57", features = ["unstable-dynamic"]}
 convert_case = "0.8.0"
 crossbeam-channel = "0.5.15"
 env_logger = "0.11.8"

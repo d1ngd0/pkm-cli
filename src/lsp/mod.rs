@@ -7,9 +7,10 @@ use std::{path::Path, str::FromStr, thread, time::Duration};
 
 pub use error::*;
 use lsp_types::{
-    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, PartialResultParams, Position,
-    TextDocumentIdentifier, TextDocumentPositionParams, Uri, WorkDoneProgressParams,
-    WorkspaceFolder,
+    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
+    PartialResultParams, Position, TextDocumentIdentifier, TextDocumentPositionParams, Uri,
+    WorkDoneProgressParams, WorkspaceFolder,
+    notification::{DidOpenTextDocument, Notification as _},
     request::{GotoDefinition, Initialize, Request as rt},
 };
 pub use request::*;
@@ -126,5 +127,25 @@ impl<R: Runner> LSP<R> {
         let id = self.sender.send(req)?;
 
         self.runner.response(id)?.result()
+    }
+
+    pub fn open_virtual<P: AsRef<Path>>(
+        &mut self,
+        uri: P,
+        content: String,
+        language: String,
+    ) -> Result<()> {
+        let params = DidOpenTextDocumentParams {
+            text_document: lsp_types::TextDocumentItem {
+                uri: Uri::from_str(&format!("file://{}", uri.as_ref().to_string_lossy()))
+                    .or_else(|err| Err(Error::LSPError(format!("error: {}", err.to_string()))))?,
+                language_id: language,
+                version: 1,
+                text: content,
+            },
+        };
+        let req = Request::from_serializable(DidOpenTextDocument::METHOD, params)?;
+        let _id = self.sender.send(req)?;
+        Ok(())
     }
 }

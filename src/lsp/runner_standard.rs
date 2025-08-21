@@ -84,6 +84,7 @@ impl StandardRunner {
 
     fn stash(&mut self) -> Result<()> {
         // get the number of requests we are expecting to read
+        // TODO: fire and forget requests, like didOpen, break this
         let delta = self.request.load(Ordering::SeqCst) - self.items_read;
         for _ in 0..delta {
             let resp = self.read_response()?;

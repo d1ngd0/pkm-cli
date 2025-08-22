@@ -11,11 +11,11 @@ use crate::Error;
 pub trait ZettelPathBuf {
     // push_year_month_day will add a [year]/[month]/[day] directory chain to the
     // path
-    fn push_year_month_day<Tz: TimeZone>(&mut self, current_date: DateTime<Tz>);
+    fn push_year_month_day<Tz: TimeZone>(&mut self, current_date: &DateTime<Tz>);
 
     // push_year_month will add a [year]/[month] directory chain to the
     // path
-    fn push_year_month<Tz: TimeZone>(&mut self, current_date: DateTime<Tz>);
+    fn push_year_month<Tz: TimeZone>(&mut self, current_date: &DateTime<Tz>);
 
     fn push_id(&mut self, id: &str);
 }
@@ -23,7 +23,7 @@ pub trait ZettelPathBuf {
 impl ZettelPathBuf for PathBuf {
     // push_year_month_day will add a [year]/[month]/[day] directory chain to the
     // path
-    fn push_year_month_day<Tz: TimeZone>(&mut self, current_date: DateTime<Tz>) {
+    fn push_year_month_day<Tz: TimeZone>(&mut self, current_date: &DateTime<Tz>) {
         self.push(format!("{:02}", current_date.year()));
         self.push(format!("{:02}", current_date.month()));
         self.push(format!("{:02}", current_date.day()));
@@ -31,7 +31,7 @@ impl ZettelPathBuf for PathBuf {
 
     // push_year_month will add a [year]/[month]/[day] directory chain to the
     // path
-    fn push_year_month<Tz: TimeZone>(&mut self, current_date: DateTime<Tz>) {
+    fn push_year_month<Tz: TimeZone>(&mut self, current_date: &DateTime<Tz>) {
         self.push(format!("{:02}", current_date.year()));
         self.push(format!("{:02}", current_date.month()));
     }
@@ -86,7 +86,7 @@ impl<'a> ZettelIDBuilder<'a> {
 
     // prefix_date will place the date at the beginning of the id in the
     // format YYYY-MM-DD
-    pub fn date<Tz: TimeZone>(mut self, date: DateTime<Tz>) -> Self {
+    pub fn date<Tz: TimeZone>(mut self, date: &DateTime<Tz>) -> Self {
         self.date = Some(format!(
             "{:04}-{:02}-{:02}",
             date.year(),

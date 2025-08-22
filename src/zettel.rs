@@ -1,11 +1,12 @@
+use std::io::Write;
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
 };
 
 use tera::Tera;
 
-use crate::Result;
+use crate::{Error, Result};
 
 // ZettelBuilder is used to set the attributes of a zettel and make
 // it into an actual file
@@ -13,6 +14,12 @@ pub struct ZettelBuilder {
     template: String,
     destination: PathBuf,
     template_dir: PathBuf,
+    references: Vec<ZettelReference>,
+}
+
+struct ZettelReference {
+    zettel_path: PathBuf,
+    prefix: String,
 }
 
 impl ZettelBuilder {
@@ -24,6 +31,7 @@ impl ZettelBuilder {
             destination: destination.as_ref().to_path_buf(),
             template: "default".into(),
             template_dir: template_dir.as_ref().to_path_buf(),
+            references: vec![],
         }
     }
 
@@ -41,8 +49,18 @@ impl ZettelBuilder {
         self
     }
 
+    // with_reference will make a reference to the zettel somewhere else
+    pub fn with_reference<P: AsRef<Path>>(mut self, at: P, prefix: &str) -> Self {
+        self.references.push(ZettelReference {
+            zettel_path: PathBuf::from(at.as_ref()),
+            prefix: prefix.to_string(),
+        });
+        self
+    }
+
     pub fn build(self, context: &tera::Context) -> Result<()> {
         let Self {
+            references,
             destination,
             mut template,
             mut template_dir,
@@ -62,9 +80,23 @@ impl ZettelBuilder {
 
         template.push_str(".md");
 
-        let f = File::create(destination)?;
+        let f = File::create(destination.as_path())?;
         tera.render_to(&template, context, &f)?;
         f.sync_all()?;
+
+        for r in references {
+            let file = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(r.zettel_path.as_path())?;
+            let id = destination
+                .as_path()
+                .file_stem()
+                .ok_or_else(|| Error::InvalidZettelID(String::from("Missing zettel id")))?
+                .to_string_lossy();
+
+            write!(&file, "\n{} [[{}]]", r.prefix, id)?;
+        }
         Ok(())
     }
 }

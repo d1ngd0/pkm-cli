@@ -6,7 +6,7 @@ use std::{
     process::Stdio,
 };
 
-use chrono::Local;
+use chrono::{DateTime, Local, TimeZone};
 use clap::{ArgMatches, Command, ValueHint, arg, value_parser};
 use clap_complete::aot::{Shell, generate};
 use inquire::Text;
@@ -32,6 +32,7 @@ fn cli() -> Command {
                 .alias("ztl")
                 .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
+                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
                 .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
                 .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
@@ -141,13 +142,14 @@ fn build_context_args(args: &ArgMatches) -> Context {
     context
 }
 
-fn template_dir_path<P>(repo: P, args: &ArgMatches) -> PathBuf
+fn template_dir_path<P, D>(repo: P, dir: D) -> PathBuf
 where
     P: AsRef<Path>,
+    D: AsRef<Path>,
 {
     let mut template_dir = PathBuf::new();
     template_dir.push(repo.as_ref());
-    template_dir.push(args.get_one::<String>("TEMPLATE_DIR").expect("defaulted"));
+    template_dir.push(dir.as_ref());
     template_dir
 }
 
@@ -179,7 +181,7 @@ where
     );
 
     // the date directory structure
-    destination.push_year_month_day(current_date);
+    destination.push_year_month_day(&current_date);
     // the name of the file
     let mut id = ZettelIDBuilder::new(Some(
         sub_matches
@@ -188,17 +190,21 @@ where
     ))
     .with_hash();
 
+    let mut reference_prefix = "";
+    if let Some(true) = sub_matches.get_one::<bool>("DATE") {
+        reference_prefix = "- 󰸗";
+        id = id.date(&current_date)
+    }
+
     if let Some(true) = sub_matches.get_one::<bool>("MEETING") {
+        reference_prefix = "- ";
         id = id.prefix("meeting");
-        id = id.date(current_date)
+        id = id.date(&current_date)
     }
 
     if let Some(true) = sub_matches.get_one::<bool>("FLEETING") {
+        reference_prefix = "- ";
         id = id.prefix("fleeting")
-    }
-
-    if let Some(true) = sub_matches.get_one::<bool>("DATE") {
-        id = id.date(current_date)
     }
 
     if let Some(date) = id.get_date() {
@@ -209,7 +215,12 @@ where
 
     destination.push_id(&id);
 
-    let template_dir = template_dir_path(repo.as_ref(), sub_matches);
+    let template_dir = template_dir_path(
+        repo.as_ref(),
+        sub_matches
+            .get_one::<String>("TEMPLATE_DIR")
+            .expect("default"),
+    );
 
     context.insert(
         "title",
@@ -218,8 +229,21 @@ where
             .expect("title required"),
     );
 
+    let daily = get_daily(
+        repo.as_ref(),
+        sub_matches
+            .get_one::<String>("TEMPLATE_DIR")
+            .expect("defaulted"),
+        sub_matches
+            .get_one::<String>("DAILY_DIR")
+            .expect("defaulted"),
+        current_date,
+        &context,
+    )?;
+
     ZettelBuilder::new(destination.as_path(), template_dir.as_path())
         .template(sub_matches.get_one::<String>("TEMPLATE"))
+        .with_reference(daily, &reference_prefix)
         .build(&context)?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
@@ -236,49 +260,53 @@ where
     Ok(())
 }
 
+// this function is a mess, and it makes me think I need to refactor all of this
+fn get_daily<Tz: TimeZone, P: AsRef<Path>, D: AsRef<Path>, E: AsRef<Path>>(
+    base: D,
+    template_dir: E,
+    daily_dir: P,
+    date: DateTime<Tz>,
+    context: &Context,
+) -> Result<PathBuf> {
+    // destination starts with the path to the repo
+    let mut destination = PathBuf::new();
+    destination.push(base.as_ref());
+    // then add the zettel directory
+    destination.push(daily_dir.as_ref());
+
+    // the date directory structure
+    destination.push_year_month(&date);
+    // the name of the file
+    destination.push_id(ZettelIDBuilder::new(None).date(&date).to_string()?.as_ref());
+
+    if destination.as_path().exists() {
+        return Ok(destination);
+    }
+
+    let template_dir = template_dir_path(base.as_ref(), template_dir);
+    let template_string = String::from(template_dir.to_str().expect("default"));
+    ZettelBuilder::new(destination.as_path(), template_dir.as_path())
+        .template(Some(&template_string))
+        .build(&context)?;
+    Ok(destination)
+}
+
 fn run_daily<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let current_date = Local::now();
-
-    // destination starts with the path to the repo
-    let mut destination = PathBuf::new();
-    destination.push(repo.as_ref());
-    // then add the zettel directory
-    destination.push(
-        sub_matches
-            .get_one::<String>("DAILY_DIR")
-            .expect("defaulted"),
-    );
-
-    // the date directory structure
-    destination.push_year_month(current_date);
-    // the name of the file
-    destination.push_id(
-        ZettelIDBuilder::new(None)
-            .date(current_date)
-            .to_string()?
-            .as_ref(),
-    );
-
-    // if the file already exists just open it and return early
-    if destination.as_path().exists() {
-        Editor::new_from_env("EDITOR", repo.as_ref())
-            .file(destination)
-            .exec()?;
-        return Ok(());
-    }
-
-    let template_dir = template_dir_path(repo.as_ref(), sub_matches);
     let context = build_context_args(sub_matches);
-
-    ZettelBuilder::new(destination.as_path(), template_dir.as_path())
-        .template(sub_matches.get_one::<String>("TEMPLATE"))
-        .build(&context)?;
+    let current_date = Local::now();
+    let daily = get_daily(
+        repo.as_ref(),
+        sub_matches.get_one::<String>("TEMPLATE").expect("default"),
+        sub_matches.get_one::<String>("DAILY_DIR").expect("default"),
+        current_date,
+        &context,
+    )?;
 
     Editor::new_from_env("EDITOR", repo.as_ref())
-        .file(destination)
+        .file(daily.as_path())
         .exec()?;
 
     Ok(())

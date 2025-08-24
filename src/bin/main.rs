@@ -190,7 +190,7 @@ where
     ))
     .with_hash();
 
-    let mut reference_prefix = "";
+    let mut reference_prefix = "- 󰎚";
     if let Some(true) = sub_matches.get_one::<bool>("DATE") {
         reference_prefix = "- 󰸗";
         id = id.date(&current_date)
@@ -242,15 +242,16 @@ where
     )?;
 
     ZettelBuilder::new(destination.as_path(), template_dir.as_path())
-        .template(sub_matches.get_one::<String>("TEMPLATE"))
+        .template(
+            sub_matches
+                .get_one::<String>("TEMPLATE")
+                .map(|f| f.as_str()),
+        )
         .with_reference(daily, &reference_prefix)
         .build(&context)?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
-        println!(
-            "created zettel: {}",
-            destination.as_path().to_string_lossy()
-        )
+        println!("{}", destination.as_path().to_string_lossy())
     } else {
         Editor::new_from_env("EDITOR", repo.as_ref())
             .file(destination)
@@ -284,9 +285,8 @@ fn get_daily<Tz: TimeZone, P: AsRef<Path>, D: AsRef<Path>, E: AsRef<Path>>(
     }
 
     let template_dir = template_dir_path(base.as_ref(), template_dir);
-    let template_string = String::from(template_dir.to_str().expect("default"));
     ZettelBuilder::new(destination.as_path(), template_dir.as_path())
-        .template(Some(&template_string))
+        .template(Some("daily"))
         .build(&context)?;
     Ok(destination)
 }
@@ -299,7 +299,9 @@ where
     let current_date = Local::now();
     let daily = get_daily(
         repo.as_ref(),
-        sub_matches.get_one::<String>("TEMPLATE").expect("default"),
+        sub_matches
+            .get_one::<String>("TEMPLATE_DIR")
+            .expect("default"),
         sub_matches.get_one::<String>("DAILY_DIR").expect("default"),
         current_date,
         &context,

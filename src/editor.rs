@@ -15,11 +15,13 @@ impl Editor {
         P: AsRef<Path>,
     {
         let mut command = Command::new(editor);
+        let path = env::var("PATH").expect("PATH not set");
 
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
+            .env("PATH", format!("{}:scripts/", path))
             .current_dir(root);
 
         Editor { command }

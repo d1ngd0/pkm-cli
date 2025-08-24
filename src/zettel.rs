@@ -35,7 +35,7 @@ impl ZettelBuilder {
         }
     }
 
-    pub fn template(mut self, template: Option<&String>) -> Self {
+    pub fn template(mut self, template: Option<&str>) -> Self {
         if let Some(template) = template {
             self.template = template.into();
         }

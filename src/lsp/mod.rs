@@ -69,7 +69,9 @@ impl<R: Runner> LSP<R> {
         Ok(lsp)
     }
 
-    // initialize the LSP
+    // initialize the LSP. Allow deprecated since there are parameters that are
+    // deprecated but I have to define them
+    #[allow(deprecated)]
     fn init<P: AsRef<Path>>(&mut self, workspace: P) -> Result<()> {
         let workspace = workspace.as_ref().to_string_lossy();
         let init = InitializeParams {

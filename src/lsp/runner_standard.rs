@@ -60,7 +60,7 @@ impl StandardRunnerBuilder {
 // run as a subprocess of the application
 pub struct StandardRunner {
     responses: HashMap<u32, Response>,
-    child: Child,
+    _child: Child,
     reader: BufReader<ChildStdout>,
     request: Arc<AtomicU32>,
     items_read: u32,
@@ -78,7 +78,7 @@ impl StandardRunner {
             items_read: 0,
             reader,
             writer,
-            child,
+            _child: child,
         }
     }
 

@@ -51,6 +51,9 @@ pub enum Error {
     #[error("Serialization Error: {0}")]
     SerializationError(#[from] serde_json::Error),
 
+    #[error("Image Error: {0}")]
+    ImageError(#[from] image::ImageError),
+
     #[error("unknown data store error")]
     Unknown,
 }

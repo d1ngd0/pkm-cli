@@ -14,8 +14,8 @@ use log::error;
 use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
-    Editor, Error, Finder, FinderItem, Result, ZettelBuilder, ZettelIDBuilder, ZettelIndex,
-    ZettelPathBuf, first_node, first_within_child,
+    Editor, Error, Finder, FinderItem, ImageBuilder, Result, ZettelBuilder, ZettelIDBuilder,
+    ZettelIndex, ZettelPathBuf, first_node, first_within_child,
     lsp::{LSP, StandardRunnerBuilder},
     path_to_id,
 };
@@ -92,6 +92,15 @@ fn cli() -> Command {
                 )
                 .about("Generate shell completion")
         )
+        .subcommand(
+            Command::new("image")
+            .alias("img")
+                .arg(arg!(IMG_DIR: --"img-dir" [IMG_DIR] "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
+            .arg(arg!(IMG: <IMG>).value_hint(ValueHint::FilePath))
+            .arg(arg!(MAX_WIDTH: --max-width <WIDTH>).required(false).default_value("1400").value_parser(clap::value_parser!(u32)))
+            .arg(arg!(MAX_HEIGHT: --max-height <HEIGHT>).required(false).default_value("1000").value_parser(clap::value_parser!(u32)))
+            .about("Add an image to the repo and echo the path")
+        )
 }
 
 fn main() {
@@ -108,6 +117,7 @@ fn main() {
         Some(("index", sub_matches)) => run_index(sub_matches, &repo),
         Some(("search", sub_matches)) => run_search(sub_matches, &repo),
         Some(("script", sub_matches)) => run_script(sub_matches, &repo),
+        Some(("image", submatches)) => run_image(submatches, &repo),
         Some(("completion", submatches)) => run_completion(submatches),
         None => run_editor(&matches, &repo),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
@@ -116,6 +126,24 @@ fn main() {
     if let Err(err) = res {
         error!("{}", err)
     }
+}
+
+fn run_image<P: AsRef<Path>>(args: &ArgMatches, repo: P) -> Result<()> {
+    let current_date = Local::now();
+    let img = ImageBuilder::new(args.get_one::<String>("IMG").expect("required"), &repo)
+        .subdirectory(args.get_one::<String>("IMG_DIR").expect("defaulted"))
+        .with_date_directory(&current_date)
+        .max_width(args.get_one::<u32>("MAX_WIDTH").copied())
+        .max_height(args.get_one::<u32>("MAX_HEIGHT").copied())
+        .build()?;
+
+    println!(
+        "{}",
+        img.rel_path(&repo)
+            .expect("we just put it into that directory")
+            .to_string_lossy()
+    );
+    Ok(())
 }
 
 fn run_completion(args: &ArgMatches) -> Result<()> {

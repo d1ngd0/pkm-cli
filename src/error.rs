@@ -12,6 +12,9 @@ pub enum Error {
     #[error("{0}")]
     InvalidZettelID(String),
 
+    #[error("PKM Error: {0}")]
+    PKMError(String),
+
     #[error("Not Found: {0}")]
     NotFound(String),
 

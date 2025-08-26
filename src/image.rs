@@ -10,17 +10,15 @@ use std::{
     path::{Path, PathBuf, StripPrefixError},
 };
 
-pub struct ImageBuilder<'a> {
-    path: &'a Path,
+pub struct ImageBuilder {
     base: PathBuf,
     max_width: Option<u32>,
     max_height: Option<u32>,
 }
 
-impl<'a> ImageBuilder<'a> {
-    pub fn new<Ap: AsRef<Path>, P: AsRef<Path>>(img: &'a Ap, base: P) -> Self {
+impl ImageBuilder {
+    pub fn new<P: AsRef<Path>>(base: P) -> Self {
         Self {
-            path: img.as_ref(),
             base: PathBuf::from(base.as_ref()),
             max_width: None,
             max_height: None,
@@ -51,15 +49,17 @@ impl<'a> ImageBuilder<'a> {
         self
     }
 
-    pub fn build(self) -> Result<Image> {
+    pub fn build<P>(self, path: P) -> Result<Image>
+    where
+        P: AsRef<Path>,
+    {
         let Self {
-            path,
             base,
             max_width,
             max_height,
         } = self;
 
-        let img = ImageReader::open(path)?.decode()?;
+        let img = ImageReader::open(path.as_ref())?.decode()?;
         let img = img.to_rgb8();
         let mut width = img.width();
         let mut height = img.height();

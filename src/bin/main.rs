@@ -14,8 +14,8 @@ use log::error;
 use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
-    Editor, Error, Finder, FinderItem, ImageBuilder, Result, ZettelBuilder, ZettelIDBuilder,
-    ZettelIndex, ZettelPathBuf, first_node, first_within_child,
+    Editor, Error, Finder, FinderItem, ImageBuilder, PKMBuilder, Result, ZettelBuilder,
+    ZettelIDBuilder, ZettelIndex, ZettelPathBuf, first_node, first_within_child,
     lsp::{LSP, StandardRunnerBuilder},
     path_to_id,
 };
@@ -129,13 +129,15 @@ fn main() {
 }
 
 fn run_image<P: AsRef<Path>>(args: &ArgMatches, repo: P) -> Result<()> {
+    let pkm = PKMBuilder::new(&repo).parse_args(args).build()?;
     let current_date = Local::now();
-    let img = ImageBuilder::new(args.get_one::<String>("IMG").expect("required"), &repo)
-        .subdirectory(args.get_one::<String>("IMG_DIR").expect("defaulted"))
+
+    let img = pkm
+        .image()
         .with_date_directory(&current_date)
         .max_width(args.get_one::<u32>("MAX_WIDTH").copied())
         .max_height(args.get_one::<u32>("MAX_HEIGHT").copied())
-        .build()?;
+        .build(args.get_one::<String>("IMG").expect("required"))?;
 
     println!(
         "{}",
@@ -198,42 +200,22 @@ where
     let current_date = Local::now();
     let mut context = build_context_args(sub_matches);
 
-    // destination starts with the path to the repo
-    let mut destination = PathBuf::new();
-    destination.push(repo.as_ref());
-    // then add the zettel directory
-    destination.push(
-        sub_matches
-            .get_one::<String>("ZETTEL_DIR")
-            .expect("defaulted"),
-    );
+    let pkm = PKMBuilder::new(&repo).parse_args(args).build()?;
 
-    // the date directory structure
-    destination.push_year_month_day(&current_date);
+    let mut id = ZettelIDBuilder::new()
+        .parse_args(args, &current_date)
+        .with_hash()
+        .build();
+
+    pkm.zettel().with_year_month_day(&current_date).id(&id);
+    // destination starts with the path to the repo
     // the name of the file
-    let mut id = ZettelIDBuilder::new(Some(
-        sub_matches
-            .get_one::<String>("TITLE")
-            .expect("title required"),
-    ))
-    .with_hash();
 
     let mut reference_prefix = "- 󰎚";
-    if let Some(true) = sub_matches.get_one::<bool>("DATE") {
-        reference_prefix = "- 󰸗";
-        id = id.date(&current_date)
-    }
+    reference_prefix = "- 󰸗";
+    reference_prefix = "- ";
 
-    if let Some(true) = sub_matches.get_one::<bool>("MEETING") {
-        reference_prefix = "- ";
-        id = id.prefix("meeting");
-        id = id.date(&current_date)
-    }
-
-    if let Some(true) = sub_matches.get_one::<bool>("FLEETING") {
-        reference_prefix = "- ";
-        id = id.prefix("fleeting")
-    }
+    reference_prefix = "- ";
 
     if let Some(date) = id.get_date() {
         context.insert("daily", date)

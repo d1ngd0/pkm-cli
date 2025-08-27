@@ -19,8 +19,11 @@ use pkm::{
     lsp::{LSP, StandardRunnerBuilder},
     path_to_id,
 };
+use regex::Regex;
 use tera::Context;
 use walkdir::WalkDir;
+
+const DATE_REGEX: &str = "d[0-9]{4}-(0[0-9]|1[0-2])-([0-2][0-9]|3[01])";
 
 fn cli() -> Command {
     Command::new("pkm")
@@ -169,6 +172,10 @@ fn build_context_args(args: &ArgMatches) -> Context {
         }
     }
 
+    if let Some(title) = sub_matches.get_one::<String>("TITLE") {
+        context.insert("title", title)
+    }
+
     context
 }
 
@@ -199,45 +206,32 @@ where
 {
     let current_date = Local::now();
     let mut context = build_context_args(sub_matches);
+    let date_reg = Regex::new(DATE_REGEX).expect("must compile");
 
     let pkm = PKMBuilder::new(&repo).parse_args(args).build()?;
 
     let mut id = ZettelIDBuilder::new()
         .parse_args(args, &current_date)
         .with_hash()
-        .build();
+        .build()?;
 
-    pkm.zettel().with_year_month_day(&current_date).id(&id);
-    // destination starts with the path to the repo
-    // the name of the file
+    if let Some(date) = id.tag_regex(&date_reg) {
+        context.insert("daily", date)
+    }
+
+    pkm.zettel()
+        .with_year_month_day(&current_date)
+        .id(&id)
+        .build(&pkm.tmpl, &context);
+
+    // TODO: you were here. Next you need to get the daily file from pkm
+    // and add the references. Then you are done
 
     let mut reference_prefix = "- 󰎚";
     reference_prefix = "- 󰸗";
     reference_prefix = "- ";
 
     reference_prefix = "- ";
-
-    if let Some(date) = id.get_date() {
-        context.insert("daily", date)
-    }
-
-    let id = id.to_string()?;
-
-    destination.push_id(&id);
-
-    let template_dir = template_dir_path(
-        repo.as_ref(),
-        sub_matches
-            .get_one::<String>("TEMPLATE_DIR")
-            .expect("default"),
-    );
-
-    context.insert(
-        "title",
-        sub_matches
-            .get_one::<String>("TITLE")
-            .expect("title required"),
-    );
 
     let daily = get_daily(
         repo.as_ref(),

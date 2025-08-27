@@ -7,7 +7,6 @@ mod markdown;
 mod syntax;
 mod zettel;
 mod zettel_index;
-mod zettel_path;
 
 use std::path::{Path, PathBuf};
 
@@ -144,7 +143,7 @@ impl<'a> PKMBuilder<'a> {
 
 pub struct PKM {
     root: PathBuf,
-    tmpl: Tera,
+    pub tmpl: Tera,
     daily_dir: PathBuf,
     image_dir: PathBuf,
     zettel_dir: PathBuf,

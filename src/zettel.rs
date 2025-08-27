@@ -8,6 +8,7 @@ use std::{
 use chrono::{DateTime, Datelike, TimeZone};
 use clap::ArgMatches;
 use convert_case::{Case, Casing};
+use regex::Regex;
 use sha1::{Digest, Sha1};
 use tera::Tera;
 
@@ -88,7 +89,7 @@ impl ZettelBuilder {
 // ZettelIDBuilder helps build an id
 pub struct ZettelIDBuilder<'a> {
     title: Option<String>,
-    prefixes: Vec<&'a str>,
+    tags: Vec<&'a str>,
     date: Option<String>,
     hash: Option<String>,
 }
@@ -98,7 +99,7 @@ impl<'a> ZettelIDBuilder<'a> {
     pub fn new() -> Self {
         Self {
             title: None,
-            prefixes: Vec::new(),
+            tags: Vec::new(),
             date: None,
             hash: None,
         }
@@ -108,13 +109,18 @@ impl<'a> ZettelIDBuilder<'a> {
     where
         S: AsRef<str>,
     {
-        self.title = title.map(|v| v.as_ref().to_case(Case::Snake));
+        self.title = title.map(|v| {
+            v.as_ref()
+                .replace('\n', "")
+                .replace('\r', "")
+                .to_case(Case::Train)
+        });
         self
     }
 
     // meeting will put "meeting" at the beginning of the id
-    pub fn prefix(mut self, prefix: &'a str) -> Self {
-        self.prefixes.push(prefix);
+    pub fn tag(mut self, prefix: &'a str) -> Self {
+        self.tags.push(prefix);
         self
     }
 
@@ -133,7 +139,7 @@ impl<'a> ZettelIDBuilder<'a> {
     // format YYYY-MM-DD
     pub fn date<Tz: TimeZone>(mut self, date: &DateTime<Tz>) -> Self {
         self.date = Some(format!(
-            "{:04}-{:02}-{:02}",
+            "d{:04}-{:02}-{:02}",
             date.year(),
             date.month(),
             date.day()
@@ -153,12 +159,12 @@ impl<'a> ZettelIDBuilder<'a> {
         }
 
         if let Some(true) = args.as_ref().get_one::<bool>("MEETING") {
-            this = this.prefix("meeting");
+            this = this.tag("meeting");
             this = this.date(&date)
         }
 
         if let Some(true) = args.as_ref().get_one::<bool>("FLEETING") {
-            this = this.prefix("fleeting")
+            this = this.tag("fleeting")
         }
 
         this
@@ -171,35 +177,35 @@ impl<'a> ZettelIDBuilder<'a> {
 
         let Self {
             title,
-            prefixes,
-            date: prefix_date,
+            tags,
+            date,
             hash,
         } = self;
 
-        for prefix in prefixes {
-            parts.push(prefix)
-        }
-
-        if let Some(date) = prefix_date.as_ref() {
-            parts.push(&date)
-        }
-
         if let Some(title) = title.as_ref() {
-            parts.push(title)
+            parts.push(title.as_str())
+        }
+
+        for tag in tags {
+            parts.push(tag)
+        }
+
+        if let Some(date) = date.as_ref() {
+            parts.push(&date)
         }
 
         if let Some(hash) = hash.as_ref() {
             parts.push(&hash[0..8])
         }
 
-        let id = parts.join("-");
+        let id = parts.join("_");
 
         if id.len() == 0 {
             Err(Error::InvalidZettelID(String::from(
                 "zettel id empty, must have title, date or hash",
             )))
         } else {
-            Ok(ZettelID(parts.join("-")))
+            Ok(ZettelID(id))
         }
     }
 }
@@ -223,6 +229,100 @@ impl ZettelID {
     pub fn filename(&self) -> String {
         format!("{}.md", **self)
     }
+
+    fn parts(&self) -> ZettelIDIter<'_> {
+        ZettelIDIter::new(self)
+    }
+
+    pub fn title(&self) -> Result<&str> {
+        self.parts()
+            .filter_map(|f| match f {
+                ZettelIDPart::Title(title) => Some(title),
+                _ => None,
+            })
+            .next()
+            .ok_or(Error::InvalidZettelID(String::from(
+                "No title in zettel ID",
+            )))
+    }
+
+    pub fn tags(&self) -> impl Iterator<Item = &str> {
+        self.parts().filter_map(|f| match f {
+            ZettelIDPart::Tag(tag) => Some(tag),
+            _ => None,
+        })
+    }
+
+    pub fn hash(&self) -> Option<&str> {
+        self.parts()
+            .filter_map(|f| match f {
+                ZettelIDPart::Hash(hash) => Some(hash),
+                _ => None,
+            })
+            .next()
+    }
+
+    pub fn tag(&self, tag: &str) -> Option<&str> {
+        self.tags().filter(|t| *t == tag).next()
+    }
+
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.tag(tag).is_some()
+    }
+
+    pub fn tag_regex(&self, tag_regex: &Regex) -> Option<&str> {
+        self.tags().filter(|t| tag_regex.is_match(t)).next()
+    }
+
+    pub fn has_tag_regex(&self, tag_regex: &Regex) -> bool {
+        self.tag_regex(tag_regex).is_some()
+    }
+}
+
+struct ZettelIDIter<'a> {
+    title: bool,
+    id: &'a ZettelID,
+    loc: usize,
+}
+
+impl<'a> ZettelIDIter<'a> {
+    fn new(id: &'a ZettelID) -> Self {
+        Self {
+            title: false,
+            id,
+            loc: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for ZettelIDIter<'a> {
+    type Item = ZettelIDPart<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let sub_str = &self.id.0[self.loc..];
+        let end = sub_str.find("_");
+
+        if sub_str.len() == 0 {
+            None
+        } else if end.is_none() {
+            self.loc = self.loc + sub_str.len();
+            Some(ZettelIDPart::Hash(sub_str))
+        } else if !self.title {
+            let (left, _) = sub_str.split_at(end.expect("if statement"));
+            self.loc = self.loc + left.len() + 1; // +1 skips the _
+            Some(ZettelIDPart::Title(left))
+        } else {
+            let (left, _) = sub_str.split_at(end.expect("if statement"));
+            self.loc = self.loc + left.len() + 1; // +1 skips the _
+            Some(ZettelIDPart::Tag(left))
+        }
+    }
+}
+
+enum ZettelIDPart<'a> {
+    Title(&'a str),
+    Tag(&'a str),
+    Hash(&'a str),
 }
 
 pub struct Zettel {

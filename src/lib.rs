@@ -165,6 +165,7 @@ impl PKM {
         ZettelBuilder::new(&self.daily_dir)
             .with_year_month(&date)
             .id(id)
+            .template(Some("daily"))
             .aquire(&self.tmpl, &context)
     }
 }

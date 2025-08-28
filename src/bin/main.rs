@@ -15,7 +15,7 @@ use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
     Editor, Error, Finder, FinderItem, PKMBuilder, Result, ZettelIDBuilder, ZettelIndex,
-    first_node, first_within_child,
+    ZettelReference, first_node, first_within_child,
     lsp::{LSP, StandardRunnerBuilder},
     path_to_id,
 };
@@ -23,7 +23,14 @@ use regex::Regex;
 use tera::Context;
 use walkdir::WalkDir;
 
-const DATE_REGEX: &str = "d[0-9]{4}-(0[0-9]|1[0-2])-([0-2][0-9]|3[01])";
+const DATE_REGEX: &str = "[0-9]{4}-(0[0-9]|1[0-2])-([0-2][0-9]|3[01])";
+const ZETTEL_ICON: &str = "󰎚";
+const MEETING_ICON: &str = "";
+const DATED_ICON: &str = "󰸗";
+const FLEETING_ICON: &str = "";
+
+const MEETING_TAG: &str = "meeting";
+const FLEETING_TAG: &str = "fleeting";
 
 fn cli() -> Command {
     let default_repo = if cfg!(debug_assertions) {
@@ -55,8 +62,10 @@ fn cli() -> Command {
             Command::new("daily")
                 .about("open the daily file")
                 .alias("day")
-                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
+                .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
+                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
+                .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
@@ -211,8 +220,19 @@ where
         .with_hash()
         .build()?;
 
+    let mut reference_prefix = ZETTEL_ICON;
+
     if let Some(date) = id.tag_regex(&date_reg) {
-        context.insert("daily", date)
+        context.insert("daily", date);
+        reference_prefix = DATED_ICON;
+    }
+
+    if id.has_tag(FLEETING_TAG) {
+        reference_prefix = FLEETING_ICON;
+    }
+
+    if id.has_tag(MEETING_TAG) {
+        reference_prefix = MEETING_ICON;
     }
 
     let zettel = pkm
@@ -222,26 +242,12 @@ where
         .id(&id)
         .build(&pkm.tmpl, &context)?;
 
-    // TODO: references
-    // let daily = pkm.daily(&current_date)?;
-
-    // let mut reference_prefix = "- 󰎚";
-    // reference_prefix = "- 󰸗";
-    // reference_prefix = "- ";
-
-    // reference_prefix = "- ";
-
-    // let daily = get_daily(
-    //     repo.as_ref(),
-    //     sub_matches
-    //         .get_one::<String>("TEMPLATE_DIR")
-    //         .expect("defaulted"),
-    //     sub_matches
-    //         .get_one::<String>("DAILY_DIR")
-    //         .expect("defaulted"),
-    //     current_date,
-    //     &context,
-    // )?;
+    // add the reference to the daily
+    let reference = ZettelReference::new(&id, reference_prefix);
+    let reference: String = reference.into();
+    let mut daily = pkm.daily(&current_date)?;
+    daily.content()?.append(&reference)?;
+    daily.sync()?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
         println!("{}", zettel.rel_path(repo.as_ref())?.to_string_lossy())

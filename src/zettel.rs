@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
-use std::io::{Read, Write};
+use std::fmt::Display;
+use std::io::Write;
 use std::ops::Deref;
 use std::path::StripPrefixError;
 use std::{
@@ -10,8 +11,8 @@ use std::{
 use chrono::{DateTime, Datelike, TimeZone};
 use clap::ArgMatches;
 use convert_case::{Case, Casing};
+use markdown::ParseOptions;
 use markdown::mdast::Node;
-use markdown::{ParseOptions, to_mdast};
 use regex::Regex;
 use sha1::{Digest, Sha1};
 use tera::{Context, Tera};
@@ -78,7 +79,7 @@ impl ZettelBuilder {
         C: Borrow<Context>,
     {
         if self.path.exists() {
-            Ok(Zettel { path: self.path })
+            Ok(Zettel::new(self.path))
         } else {
             self.build(tmpls, context)
         }
@@ -105,13 +106,8 @@ impl ZettelBuilder {
         tmpls.borrow().render_to(&tmpl_name, context.borrow(), &f)?;
         f.sync_all()?;
 
-        Ok(Zettel { path })
+        Ok(Zettel::new(path))
     }
-}
-
-struct ZettelReference {
-    zettel_path: PathBuf,
-    prefix: String,
 }
 
 // ZettelIDBuilder helps build an id
@@ -168,7 +164,7 @@ impl<'a> ZettelIDBuilder<'a> {
     // format YYYY-MM-DD
     pub fn date<Tz: TimeZone>(mut self, date: &DateTime<Tz>) -> Self {
         self.date = Some(format!(
-            "d{:04}-{:02}-{:02}",
+            "{:04}-{:02}-{:02}",
             date.year(),
             date.month(),
             date.day()
@@ -188,7 +184,7 @@ impl<'a> ZettelIDBuilder<'a> {
         let mut this = self.title(args.get_one::<String>("TITLE"));
 
         if let Some(true) = args.get_one::<bool>("DATE") {
-            this = this.date(&date)
+            this = this.date(&date);
         }
 
         if let Some(true) = args.get_one::<bool>("MEETING") {
@@ -197,7 +193,7 @@ impl<'a> ZettelIDBuilder<'a> {
         }
 
         if let Some(true) = args.get_one::<bool>("FLEETING") {
-            this = this.tag("fleeting")
+            this = this.tag("fleeting");
         }
 
         this
@@ -243,6 +239,7 @@ impl<'a> ZettelIDBuilder<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct ZettelID(String);
 
 impl From<ZettelID> for String {
@@ -261,6 +258,12 @@ impl Deref for ZettelID {
 impl AsRef<ZettelID> for ZettelID {
     fn as_ref(&self) -> &Self {
         self
+    }
+}
+
+impl Display for ZettelID {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
@@ -366,9 +369,17 @@ enum ZettelIDPart<'a> {
 
 pub struct Zettel {
     path: PathBuf,
+    content: Option<String>,
 }
 
 impl Zettel {
+    pub fn new<P: Into<PathBuf>>(path: P) -> Zettel {
+        Zettel {
+            path: path.into(),
+            content: None,
+        }
+    }
+
     pub fn rel_path<P: AsRef<Path>>(
         &self,
         parent: P,
@@ -376,15 +387,28 @@ impl Zettel {
         self.path.strip_prefix(parent)
     }
 
-    pub fn content<'a>(&'a self) -> Result<ZettelContent<'a>> {
-        let md_string = fs::read_to_string(&self.path)?;
-        let opts = ParseOptions::gfm();
-        let ast = markdown::to_mdast(&md_string, &opts)?;
+    pub fn content<'a>(&'a mut self) -> Result<ZettelContent<'a>> {
+        let content = fs::read_to_string(&self.path)?;
+        let child = self.content.insert(content);
 
-        Ok(ZettelContent {
-            path: self.path.as_path(),
-            md: ast,
-        })
+        Ok(ZettelContent { child })
+    }
+
+    pub fn sync(&mut self) -> Result<()> {
+        let content = match self.content.take() {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let mut file = File::options()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .open(self.path.as_path())?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()?;
+
+        Ok(())
     }
 }
 
@@ -395,41 +419,45 @@ impl AsRef<Zettel> for Zettel {
 }
 
 pub struct ZettelContent<'a> {
-    path: &'a Path,
-    md: ZettelSubContent<'a>,
+    child: &'a mut String,
 }
 
 impl<'a> ZettelContent<'a> {
-    pub fn sync(&mut self) -> Result<()> {
-        let mut file = File::options()
-            .truncate(true)
-            .create(true)
-            .write(true)
-            .open(self.path)?;
-        let c = self.md.to_string();
-        file.write_all(c.as_bytes())?;
-        file.sync_all()?;
-
+    pub fn append(&mut self, child: &str) -> Result<()> {
+        self.child.push_str("\n");
+        self.child.push_str(child);
         Ok(())
     }
 }
 
-impl<'a> Deref for ZettelContent<'a> {
-    type Target = ZettelSubContent<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.md
+impl<'a> ToString for ZettelContent<'a> {
+    fn to_string(&self) -> String {
+        self.child.to_string()
     }
 }
 
-pub struct ZettelSubContent<'a> {
-    child: &'a Node,
+pub struct ZettelReference<'a> {
+    id: &'a ZettelID,
+    prefix: &'a str,
 }
 
-impl<'a> ZettelSubContent<'a> {}
+impl<'a> ZettelReference<'a> {
+    pub fn new(id: &'a ZettelID, prefix: &'a str) -> ZettelReference<'a> {
+        ZettelReference { id, prefix }
+    }
+}
 
-impl<'a> ToString for ZettelSubContent<'a> {
-    fn to_string(&self) -> String {
-        self.child.to_string()
+// From a time in the past when this was going to be possible
+// we need to align all on the same thing
+// impl From<ZettelReference<'_>> for Node {
+//     fn from(value: ZettelReference<'_>) -> Self {
+//         let opts = ParseOptions::gfm();
+//         markdown::to_mdast(&format!("- {} [[{}]]", value.prefix, value.id), &opts).unwrap()
+//     }
+// }
+
+impl From<ZettelReference<'_>> for String {
+    fn from(value: ZettelReference<'_>) -> Self {
+        format!("- {} [[{}]]", value.prefix, value.id)
     }
 }

@@ -6,7 +6,7 @@ use std::{
     process::Stdio,
 };
 
-use chrono::{DateTime, Local, TimeZone};
+use chrono::Local;
 use clap::{ArgMatches, Command, ValueHint, arg, value_parser};
 use clap_complete::aot::{Shell, generate};
 use inquire::Text;
@@ -14,8 +14,8 @@ use log::error;
 use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
-    Editor, Error, Finder, FinderItem, ImageBuilder, PKMBuilder, Result, ZettelBuilder,
-    ZettelIDBuilder, ZettelIndex, ZettelPathBuf, first_node, first_within_child,
+    Editor, Error, Finder, FinderItem, PKMBuilder, Result, ZettelIDBuilder, ZettelIndex,
+    first_node, first_within_child,
     lsp::{LSP, StandardRunnerBuilder},
     path_to_id,
 };
@@ -26,9 +26,15 @@ use walkdir::WalkDir;
 const DATE_REGEX: &str = "d[0-9]{4}-(0[0-9]|1[0-2])-([0-2][0-9]|3[01])";
 
 fn cli() -> Command {
+    let default_repo = if cfg!(debug_assertions) {
+        "PKM_DEV_REPO"
+    } else {
+        "PKM_REPO"
+    };
+
     Command::new("pkm")
         .about("A PKM management CLI")
-        .arg(arg!(REPO: -r --repo <REPO> "The root directory of the pkm").env("PKM_REPO"))
+        .arg(arg!(REPO: -r --repo <REPO> "The root directory of the pkm").env(default_repo))
         .subcommand(
             Command::new("zettel")
                 .about("Create a new zettel")
@@ -36,6 +42,7 @@ fn cli() -> Command {
                 .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
                 .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
+                .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
                 .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
                 .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
@@ -98,10 +105,10 @@ fn cli() -> Command {
         .subcommand(
             Command::new("image")
             .alias("img")
-                .arg(arg!(IMG_DIR: --"img-dir" [IMG_DIR] "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
+                .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
             .arg(arg!(IMG: <IMG>).value_hint(ValueHint::FilePath))
-            .arg(arg!(MAX_WIDTH: --max-width <WIDTH>).required(false).default_value("1400").value_parser(clap::value_parser!(u32)))
-            .arg(arg!(MAX_HEIGHT: --max-height <HEIGHT>).required(false).default_value("1000").value_parser(clap::value_parser!(u32)))
+            .arg(arg!(MAX_WIDTH: --"max-width" <WIDTH>).required(false).default_value("1400").value_parser(clap::value_parser!(u32)))
+            .arg(arg!(MAX_HEIGHT: --"max-height" <HEIGHT>).required(false).default_value("1000").value_parser(clap::value_parser!(u32)))
             .about("Add an image to the repo and echo the path")
         )
 }
@@ -172,22 +179,11 @@ fn build_context_args(args: &ArgMatches) -> Context {
         }
     }
 
-    if let Some(title) = sub_matches.get_one::<String>("TITLE") {
+    if let Some(title) = args.get_one::<String>("TITLE") {
         context.insert("title", title)
     }
 
     context
-}
-
-fn template_dir_path<P, D>(repo: P, dir: D) -> PathBuf
-where
-    P: AsRef<Path>,
-    D: AsRef<Path>,
-{
-    let mut template_dir = PathBuf::new();
-    template_dir.push(repo.as_ref());
-    template_dir.push(dir.as_ref());
-    template_dir
 }
 
 fn run_editor<P>(_matches: &ArgMatches, repo: P) -> Result<()>
@@ -208,10 +204,10 @@ where
     let mut context = build_context_args(sub_matches);
     let date_reg = Regex::new(DATE_REGEX).expect("must compile");
 
-    let pkm = PKMBuilder::new(&repo).parse_args(args).build()?;
+    let pkm = PKMBuilder::new(&repo).parse_args(sub_matches).build()?;
 
-    let mut id = ZettelIDBuilder::new()
-        .parse_args(args, &current_date)
+    let id = ZettelIDBuilder::new()
+        .parse_args(sub_matches, &current_date)
         .with_hash()
         .build()?;
 
@@ -219,100 +215,54 @@ where
         context.insert("daily", date)
     }
 
-    pkm.zettel()
+    let zettel = pkm
+        .zettel()
         .with_year_month_day(&current_date)
+        .parse_args(sub_matches)
         .id(&id)
-        .build(&pkm.tmpl, &context);
+        .build(&pkm.tmpl, &context)?;
 
-    // TODO: you were here. Next you need to get the daily file from pkm
-    // and add the references. Then you are done
+    // TODO: references
+    // let daily = pkm.daily(&current_date)?;
 
-    let mut reference_prefix = "- 󰎚";
-    reference_prefix = "- 󰸗";
-    reference_prefix = "- ";
+    // let mut reference_prefix = "- 󰎚";
+    // reference_prefix = "- 󰸗";
+    // reference_prefix = "- ";
 
-    reference_prefix = "- ";
+    // reference_prefix = "- ";
 
-    let daily = get_daily(
-        repo.as_ref(),
-        sub_matches
-            .get_one::<String>("TEMPLATE_DIR")
-            .expect("defaulted"),
-        sub_matches
-            .get_one::<String>("DAILY_DIR")
-            .expect("defaulted"),
-        current_date,
-        &context,
-    )?;
-
-    ZettelBuilder::new(destination.as_path(), template_dir.as_path())
-        .template(
-            sub_matches
-                .get_one::<String>("TEMPLATE")
-                .map(|f| f.as_str()),
-        )
-        .with_reference(daily, &reference_prefix)
-        .build(&context)?;
+    // let daily = get_daily(
+    //     repo.as_ref(),
+    //     sub_matches
+    //         .get_one::<String>("TEMPLATE_DIR")
+    //         .expect("defaulted"),
+    //     sub_matches
+    //         .get_one::<String>("DAILY_DIR")
+    //         .expect("defaulted"),
+    //     current_date,
+    //     &context,
+    // )?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
-        println!("{}", destination.as_path().to_string_lossy())
+        println!("{}", zettel.rel_path(repo.as_ref())?.to_string_lossy())
     } else {
         Editor::new_from_env("EDITOR", repo.as_ref())
-            .file(destination)
+            .file(zettel.rel_path(repo.as_ref())?)
             .exec()?;
     }
 
     Ok(())
 }
 
-// this function is a mess, and it makes me think I need to refactor all of this
-fn get_daily<Tz: TimeZone, P: AsRef<Path>, D: AsRef<Path>, E: AsRef<Path>>(
-    base: D,
-    template_dir: E,
-    daily_dir: P,
-    date: DateTime<Tz>,
-    context: &Context,
-) -> Result<PathBuf> {
-    // destination starts with the path to the repo
-    let mut destination = PathBuf::new();
-    destination.push(base.as_ref());
-    // then add the zettel directory
-    destination.push(daily_dir.as_ref());
-
-    // the date directory structure
-    destination.push_year_month(&date);
-    // the name of the file
-    destination.push_id(ZettelIDBuilder::new(None).date(&date).to_string()?.as_ref());
-
-    if destination.as_path().exists() {
-        return Ok(destination);
-    }
-
-    let template_dir = template_dir_path(base.as_ref(), template_dir);
-    ZettelBuilder::new(destination.as_path(), template_dir.as_path())
-        .template(Some("daily"))
-        .build(&context)?;
-    Ok(destination)
-}
-
 fn run_daily<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let context = build_context_args(sub_matches);
     let current_date = Local::now();
-    let daily = get_daily(
-        repo.as_ref(),
-        sub_matches
-            .get_one::<String>("TEMPLATE_DIR")
-            .expect("default"),
-        sub_matches.get_one::<String>("DAILY_DIR").expect("default"),
-        current_date,
-        &context,
-    )?;
-
+    let pkm = PKMBuilder::new(&repo).parse_args(sub_matches).build()?;
+    let daily = pkm.daily(&current_date)?;
     Editor::new_from_env("EDITOR", repo.as_ref())
-        .file(daily.as_path())
+        .file(daily.rel_path(repo.as_ref())?)
         .exec()?;
 
     Ok(())

@@ -18,6 +18,9 @@ pub enum Error {
     #[error("Not Found: {0}")]
     NotFound(String),
 
+    #[error("parsing error")]
+    StripError(#[from] std::path::StripPrefixError),
+
     #[error("prompt error: {0}")]
     PromptError(#[from] inquire::error::InquireError),
 

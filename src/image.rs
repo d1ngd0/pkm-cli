@@ -87,7 +87,8 @@ impl ImageBuilder {
         // Create the directory for the thing to live in
         fs::create_dir_all(base.as_path())?; // only creates the directories, not the file
 
-        let mut id = ZettelIDBuilder::new(None).with_hash().to_string()?;
+        let id = ZettelIDBuilder::new().with_hash().build()?;
+        let mut id: String = id.into();
         id.push_str(".jpg");
 
         let mut path = PathBuf::from(base);

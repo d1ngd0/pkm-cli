@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+use std::io::{Read, Write};
 use std::ops::Deref;
 use std::path::StripPrefixError;
 use std::{
@@ -8,9 +10,11 @@ use std::{
 use chrono::{DateTime, Datelike, TimeZone};
 use clap::ArgMatches;
 use convert_case::{Case, Casing};
+use markdown::mdast::Node;
+use markdown::{ParseOptions, to_mdast};
 use regex::Regex;
 use sha1::{Digest, Sha1};
-use tera::Tera;
+use tera::{Context, Tera};
 
 use crate::{Error, Result};
 
@@ -19,11 +23,6 @@ use crate::{Error, Result};
 pub struct ZettelBuilder {
     path: PathBuf,
     tmpl_name: String,
-}
-
-struct ZettelReference {
-    zettel_path: PathBuf,
-    prefix: String,
 }
 
 impl ZettelBuilder {
@@ -53,19 +52,43 @@ impl ZettelBuilder {
     }
 
     // push_id adds the id as the filename to the path
-    pub fn id(mut self, id: &ZettelID) -> Self {
-        self.path.push(id.filename());
+    pub fn id<Z: AsRef<ZettelID>>(mut self, id: Z) -> Self {
+        self.path.push(id.as_ref().filename());
         self
     }
 
-    pub fn template(mut self, template: Option<&str>) -> Self {
+    // parse_args takes arg matches and grabs the following from it
+    // TEMPLATE: String
+    pub fn parse_args(self, args: &ArgMatches) -> Self {
+        self.template(args.get_one::<String>("TEMPLATE"))
+    }
+
+    pub fn template<S: AsRef<str>>(mut self, template: Option<S>) -> Self {
         if let Some(template) = template {
-            self.tmpl_name = template.into();
+            self.tmpl_name = template.as_ref().into();
         }
         self
     }
 
-    pub fn build(self, tmpls: &Tera, context: &tera::Context) -> Result<Zettel> {
+    // aquire will create the date zettel or return the existing one if it
+    // doesn't already exist.
+    pub fn aquire<T, C>(self, tmpls: T, context: C) -> Result<Zettel>
+    where
+        T: Borrow<Tera>,
+        C: Borrow<Context>,
+    {
+        if self.path.exists() {
+            Ok(Zettel { path: self.path })
+        } else {
+            self.build(tmpls, context)
+        }
+    }
+
+    pub fn build<T, C>(self, tmpls: T, context: C) -> Result<Zettel>
+    where
+        T: Borrow<Tera>,
+        C: Borrow<Context>,
+    {
         let Self {
             path,
             mut tmpl_name,
@@ -79,11 +102,16 @@ impl ZettelBuilder {
         tmpl_name.push_str(".md");
 
         let f = File::create(path.as_path())?;
-        tmpls.render_to(&tmpl_name, context, &f)?;
+        tmpls.borrow().render_to(&tmpl_name, context.borrow(), &f)?;
         f.sync_all()?;
 
         Ok(Zettel { path })
     }
+}
+
+struct ZettelReference {
+    zettel_path: PathBuf,
+    prefix: String,
 }
 
 // ZettelIDBuilder helps build an id
@@ -114,6 +142,7 @@ impl<'a> ZettelIDBuilder<'a> {
                 .replace('\n', "")
                 .replace('\r', "")
                 .to_case(Case::Train)
+                .to_lowercase()
         });
         self
     }
@@ -147,23 +176,27 @@ impl<'a> ZettelIDBuilder<'a> {
         self
     }
 
-    pub fn parse_args<M, Tz>(self, args: M, date: &DateTime<Tz>) -> Self
+    // parse_args takes arg matches and grabs the following from it
+    // TITLE: String The title
+    // DATE: bool Sets a date tag
+    // MEETING: bool Sets the date and `meeting` tag
+    // FLEETING: bool Sets the `fleeting` tag
+    pub fn parse_args<Tz>(self, args: &ArgMatches, date: &DateTime<Tz>) -> Self
     where
-        M: AsRef<ArgMatches>,
         Tz: TimeZone,
     {
-        let mut this = self.title(args.as_ref().get_one::<String>("TITLE"));
+        let mut this = self.title(args.get_one::<String>("TITLE"));
 
-        if let Some(true) = args.as_ref().get_one::<bool>("DATE") {
+        if let Some(true) = args.get_one::<bool>("DATE") {
             this = this.date(&date)
         }
 
-        if let Some(true) = args.as_ref().get_one::<bool>("MEETING") {
+        if let Some(true) = args.get_one::<bool>("MEETING") {
             this = this.tag("meeting");
             this = this.date(&date)
         }
 
-        if let Some(true) = args.as_ref().get_one::<bool>("FLEETING") {
+        if let Some(true) = args.get_one::<bool>("FLEETING") {
             this = this.tag("fleeting")
         }
 
@@ -222,6 +255,12 @@ impl Deref for ZettelID {
     type Target = String;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl AsRef<ZettelID> for ZettelID {
+    fn as_ref(&self) -> &Self {
+        self
     }
 }
 
@@ -335,5 +374,62 @@ impl Zettel {
         parent: P,
     ) -> std::result::Result<&Path, StripPrefixError> {
         self.path.strip_prefix(parent)
+    }
+
+    pub fn content<'a>(&'a self) -> Result<ZettelContent<'a>> {
+        let md_string = fs::read_to_string(&self.path)?;
+        let opts = ParseOptions::gfm();
+        let ast = markdown::to_mdast(&md_string, &opts)?;
+
+        Ok(ZettelContent {
+            path: self.path.as_path(),
+            md: ast,
+        })
+    }
+}
+
+impl AsRef<Zettel> for Zettel {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
+pub struct ZettelContent<'a> {
+    path: &'a Path,
+    md: ZettelSubContent<'a>,
+}
+
+impl<'a> ZettelContent<'a> {
+    pub fn sync(&mut self) -> Result<()> {
+        let mut file = File::options()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .open(self.path)?;
+        let c = self.md.to_string();
+        file.write_all(c.as_bytes())?;
+        file.sync_all()?;
+
+        Ok(())
+    }
+}
+
+impl<'a> Deref for ZettelContent<'a> {
+    type Target = ZettelSubContent<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.md
+    }
+}
+
+pub struct ZettelSubContent<'a> {
+    child: &'a Node,
+}
+
+impl<'a> ZettelSubContent<'a> {}
+
+impl<'a> ToString for ZettelSubContent<'a> {
+    fn to_string(&self) -> String {
+        self.child.to_string()
     }
 }

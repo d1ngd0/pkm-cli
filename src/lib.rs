@@ -10,13 +10,14 @@ mod zettel_index;
 
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, TimeZone};
 use clap::ArgMatches;
 pub use editor::*;
 pub use error::*;
 pub use finder::*;
 pub use image::*;
 pub use syntax::*;
-use tera::Tera;
+use tera::{Context, Tera};
 pub use zettel::*;
 pub use zettel_index::*;
 
@@ -156,5 +157,14 @@ impl PKM {
 
     pub fn zettel(&self) -> ZettelBuilder {
         ZettelBuilder::new(&self.zettel_dir)
+    }
+
+    pub fn daily<Tz: TimeZone>(&self, date: &DateTime<Tz>) -> Result<Zettel> {
+        let context = Context::new();
+        let id = ZettelIDBuilder::new().date(&date).build()?;
+        ZettelBuilder::new(&self.daily_dir)
+            .with_year_month(&date)
+            .id(id)
+            .aquire(&self.tmpl, &context)
     }
 }

@@ -18,7 +18,10 @@ pub enum Error {
     #[error("Not Found: {0}")]
     NotFound(String),
 
-    #[error("parsing error")]
+    #[error("date parsing error: {0}")]
+    DateParsingError(#[from] human_date_parser::ParseError),
+
+    #[error("parsing error: {0}")]
     StripError(#[from] std::path::StripPrefixError),
 
     #[error("prompt error: {0}")]

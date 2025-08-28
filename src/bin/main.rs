@@ -6,9 +6,10 @@ use std::{
     process::Stdio,
 };
 
-use chrono::Local;
+use chrono::{DateTime, Local, TimeZone};
 use clap::{ArgMatches, Command, ValueHint, arg, value_parser};
 use clap_complete::aot::{Shell, generate};
+use human_date_parser::ParseResult;
 use inquire::Text;
 use log::error;
 use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
@@ -49,7 +50,7 @@ fn cli() -> Command {
                 .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
                 .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
-                .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
+                .arg(arg!(IMG_DIR: --"img-dir" [IMG_DIR] "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
                 .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
                 .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
@@ -67,6 +68,7 @@ fn cli() -> Command {
                 .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
                 .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
+                .arg(arg!(DATE: [DATE] "Human representation of a date for the dailly").default_value("today"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
         .subcommand(
@@ -260,11 +262,23 @@ where
     Ok(())
 }
 
+fn parse_human_date(date: &str) -> Result<DateTime<Local>> {
+    // this library makes things hard
+    let current_date = human_date_parser::from_human_time(date, Local::now().naive_local())?;
+    let current_date = match current_date {
+        ParseResult::DateTime(datetime) => datetime,
+        ParseResult::Date(date) => date.into(),
+        ParseResult::Time(_) => Local::now().naive_local(),
+    };
+
+    Ok(Local.from_local_datetime(&current_date).unwrap())
+}
+
 fn run_daily<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let current_date = Local::now();
+    let current_date = parse_human_date(sub_matches.get_one::<String>("DATE").expect("defaulted"))?;
     let pkm = PKMBuilder::new(&repo).parse_args(sub_matches).build()?;
     let daily = pkm.daily(&current_date)?;
     Editor::new_from_env("EDITOR", repo.as_ref())

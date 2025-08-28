@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, TimeZone};
+use chrono::{DateTime, Datelike, Local};
 use image::{
     ImageReader,
     imageops::{self, FilterType::Gaussian},
@@ -32,7 +32,7 @@ impl ImageBuilder {
 
     // with_date_directory will add the path [year]/[month]/[day] to the base
     // when creating the image
-    pub fn with_date_directory<Tz: TimeZone>(mut self, date: &DateTime<Tz>) -> Self {
+    pub fn with_date_directory(mut self, date: &DateTime<Local>) -> Self {
         self.base.push(format!("{:02}", date.year()));
         self.base.push(format!("{:02}", date.month()));
         self.base.push(format!("{:02}", date.day()));

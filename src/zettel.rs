@@ -8,11 +8,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::{DateTime, Datelike, TimeZone};
+use chrono::{DateTime, Datelike, Local};
 use clap::ArgMatches;
 use convert_case::{Case, Casing};
-use markdown::ParseOptions;
-use markdown::mdast::Node;
 use regex::Regex;
 use sha1::{Digest, Sha1};
 use tera::{Context, Tera};
@@ -37,7 +35,7 @@ impl ZettelBuilder {
         }
     }
 
-    pub fn with_year_month_day<Tz: TimeZone>(mut self, current_date: &DateTime<Tz>) -> Self {
+    pub fn with_year_month_day(mut self, current_date: &DateTime<Local>) -> Self {
         self.path.push(format!("{:02}", current_date.year()));
         self.path.push(format!("{:02}", current_date.month()));
         self.path.push(format!("{:02}", current_date.day()));
@@ -46,7 +44,7 @@ impl ZettelBuilder {
 
     // push_year_month will add a [year]/[month]/[day] directory chain to the
     // path
-    pub fn with_year_month<Tz: TimeZone>(mut self, current_date: &DateTime<Tz>) -> Self {
+    pub fn with_year_month(mut self, current_date: &DateTime<Local>) -> Self {
         self.path.push(format!("{:02}", current_date.year()));
         self.path.push(format!("{:02}", current_date.month()));
         self
@@ -162,7 +160,7 @@ impl<'a> ZettelIDBuilder<'a> {
 
     // prefix_date will place the date at the beginning of the id in the
     // format YYYY-MM-DD
-    pub fn date<Tz: TimeZone>(mut self, date: &DateTime<Tz>) -> Self {
+    pub fn date(mut self, date: &DateTime<Local>) -> Self {
         self.date = Some(format!(
             "{:04}-{:02}-{:02}",
             date.year(),
@@ -177,10 +175,7 @@ impl<'a> ZettelIDBuilder<'a> {
     // DATE: bool Sets a date tag
     // MEETING: bool Sets the date and `meeting` tag
     // FLEETING: bool Sets the `fleeting` tag
-    pub fn parse_args<Tz>(self, args: &ArgMatches, date: &DateTime<Tz>) -> Self
-    where
-        Tz: TimeZone,
-    {
+    pub fn parse_args(self, args: &ArgMatches, date: &DateTime<Local>) -> Self {
         let mut this = self.title(args.get_one::<String>("TITLE"));
 
         if let Some(true) = args.get_one::<bool>("DATE") {

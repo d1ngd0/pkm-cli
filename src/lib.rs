@@ -10,7 +10,7 @@ mod zettel_index;
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, Local};
 use clap::ArgMatches;
 pub use editor::*;
 pub use error::*;
@@ -159,8 +159,9 @@ impl PKM {
         ZettelBuilder::new(&self.zettel_dir)
     }
 
-    pub fn daily<Tz: TimeZone>(&self, date: &DateTime<Tz>) -> Result<Zettel> {
-        let context = Context::new();
+    pub fn daily(&self, date: &DateTime<Local>) -> Result<Zettel> {
+        let mut context = Context::new();
+        context.insert("date", &format!("{}", date.format("%A, %B %d, %Y")));
         let id = ZettelIDBuilder::new().date(&date).build()?;
         ZettelBuilder::new(&self.daily_dir)
             .with_year_month(&date)

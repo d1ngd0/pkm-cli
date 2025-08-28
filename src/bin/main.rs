@@ -69,6 +69,7 @@ fn cli() -> Command {
                 .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
                 .arg(arg!(DATE: [DATE] "Human representation of a date for the dailly").default_value("today"))
+                .arg(arg!(NO_EDIT: --"no-edit" "Do not open in an editor once created"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
         )
         .subcommand(
@@ -281,9 +282,14 @@ where
     let current_date = parse_human_date(sub_matches.get_one::<String>("DATE").expect("defaulted"))?;
     let pkm = PKMBuilder::new(&repo).parse_args(sub_matches).build()?;
     let daily = pkm.daily(&current_date)?;
-    Editor::new_from_env("EDITOR", repo.as_ref())
-        .file(daily.rel_path(repo.as_ref())?)
-        .exec()?;
+
+    if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
+        println!("{}", daily.rel_path(repo.as_ref())?.to_string_lossy())
+    } else {
+        Editor::new_from_env("EDITOR", repo.as_ref())
+            .file(daily.rel_path(repo.as_ref())?)
+            .exec()?;
+    }
 
     Ok(())
 }

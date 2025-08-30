@@ -1,9 +1,8 @@
 use std::{
     collections::HashMap,
     ffi::OsStr,
-    io::{BufRead, BufReader, Read, Write},
     path::Path,
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    process::Stdio,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU32, Ordering},
@@ -11,8 +10,13 @@ use std::{
 };
 
 use serde::Serialize;
+use tokio::{
+    io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader},
+    process::{Child, ChildStdin, Command},
+    sync::mpsc::{Receiver, Sender, channel},
+};
 
-use super::{Error, Request, RequestID, Response, Result, Runner, Sender};
+use super::{Error, Request, RequestID, Requester, Response, Result, Runner};
 
 pub struct StandardRunnerBuilder {
     cmd: Command,
@@ -61,73 +65,45 @@ impl StandardRunnerBuilder {
 pub struct StandardRunner {
     responses: HashMap<u32, Response>,
     _child: Child,
-    reader: BufReader<ChildStdout>,
+    recv: Receiver<Response>,
     request: Arc<AtomicU32>,
-    items_read: u32,
     writer: Arc<Mutex<ChildStdin>>,
 }
 
 impl StandardRunner {
     fn new(mut child: Child) -> Self {
-        let reader = BufReader::new(child.stdout.take().expect("stdout will be there"));
+        let (mut reader, recv) =
+            StandardRunnerReader::new(child.stdout.take().expect("stdout will be there"));
         let writer = Arc::new(Mutex::new(child.stdin.take().expect("stdin will be there")));
+
+        tokio::spawn(async move { reader.start().await });
 
         StandardRunner {
             responses: HashMap::new(),
+            recv,
             request: Arc::new(AtomicU32::new(0)),
-            items_read: 0,
-            reader,
             writer,
             _child: child,
         }
-    }
-
-    fn stash(&mut self) -> Result<()> {
-        // get the number of requests we are expecting to read
-        // TODO: fire and forget requests, like didOpen, break this
-        let delta = self.request.load(Ordering::SeqCst) - self.items_read;
-        for _ in 0..delta {
-            let resp = self.read_response()?;
-            self.responses.insert(resp.id, resp);
-            self.items_read += 1;
-        }
-
-        Ok(())
-    }
-
-    fn read_response(&mut self) -> Result<Response> {
-        let mut buf = String::new();
-        let mut headers = HashMap::new();
-        self.reader.read_line(&mut buf)?;
-
-        while !buf.trim_end().is_empty() {
-            let (key, value) = buf
-                .split_once(":")
-                .ok_or_else(|| Error::LSPError(format!("Invalid header \"{}\"", &buf)))?;
-
-            headers.insert(key.trim().to_lowercase(), value.trim().to_string());
-
-            buf.clear();
-            self.reader.read_line(&mut buf)?;
-        }
-
-        let length: usize = headers
-            .get("content-length")
-            .ok_or_else(|| Error::LSPError(format!("missing required header Content-Length")))?
-            .parse()?;
-
-        let mut body = vec![0; length];
-        self.reader.read_exact(&mut body)?;
-
-        Ok(Response::new(headers, &body)?)
     }
 }
 
 impl Runner for StandardRunner {
     type Sender = StandardRunnerWriter;
-    fn try_response(&mut self, r: RequestID) -> Result<Response> {
-        self.stash()?;
-        self.responses.remove(&r.into()).ok_or(Error::NotReady)
+    async fn response(&mut self, r: RequestID) -> Result<Response> {
+        loop {
+            match self.recv.recv().await {
+                Some(resp) => {
+                    self.responses.insert(resp.id, resp);
+                }
+                None => return Err(Error::LSPError(String::from("reciever closed"))),
+            }
+
+            match self.responses.remove(&r) {
+                Some(response) => return Ok(response),
+                None => continue,
+            }
+        }
     }
 
     fn sender(&mut self) -> Result<StandardRunnerWriter> {
@@ -138,7 +114,60 @@ impl Runner for StandardRunner {
     }
 }
 
-pub struct StandardRunnerReader {}
+struct StandardRunnerReader<R: AsyncRead + Unpin> {
+    sync: Sender<Response>,
+    reader: BufReader<R>,
+}
+
+impl<R: AsyncRead + Unpin> StandardRunnerReader<R> {
+    fn new(reader: R) -> (Self, Receiver<Response>) {
+        let (sync, rec) = channel(100);
+
+        (
+            StandardRunnerReader {
+                sync,
+                reader: BufReader::new(reader),
+            },
+            rec,
+        )
+    }
+
+    async fn start(&mut self) -> Result<()> {
+        loop {
+            // if there is a read failure of some kind we return and close the routine
+            let res = self.read_response().await?;
+            // if their is no reciever because it was dropped we return and close the routine
+            self.sync.send(res).await?;
+        }
+    }
+
+    async fn read_response(&mut self) -> Result<Response> {
+        let mut buf = String::new();
+        let mut headers = HashMap::new();
+        self.reader.read_line(&mut buf).await?;
+
+        while !buf.trim_end().is_empty() {
+            let (key, value) = buf
+                .split_once(":")
+                .ok_or_else(|| Error::LSPError(format!("Invalid header \"{}\"", &buf)))?;
+
+            headers.insert(key.trim().to_lowercase(), value.trim().to_string());
+
+            buf.clear();
+            self.reader.read_line(&mut buf).await?;
+        }
+
+        let length: usize = headers
+            .get("content-length")
+            .ok_or_else(|| Error::LSPError(format!("missing required header Content-Length")))?
+            .parse()?;
+
+        let mut body = vec![0; length];
+        self.reader.read_exact(&mut body).await?;
+
+        Ok(Response::new(headers, &body)?)
+    }
+}
 
 pub struct StandardRunnerWriter {
     request: Arc<AtomicU32>,
@@ -151,8 +180,8 @@ impl StandardRunnerWriter {
     }
 }
 
-impl Sender for StandardRunnerWriter {
-    fn send<S, R>(&mut self, msg: R) -> Result<RequestID>
+impl Requester for StandardRunnerWriter {
+    async fn send<S, R>(&mut self, msg: R) -> Result<RequestID>
     where
         S: Serialize,
         R: Into<Request<S>>,
@@ -163,12 +192,10 @@ impl Sender for StandardRunnerWriter {
 
         let req_b = serde_json::to_string(&msg)?;
 
-        write!(
-            self.writer.lock().unwrap(),
-            "Content-Length:{}\r\n\r\n{}",
-            req_b.len(),
-            &req_b
-        )?;
+        let headers = format!("Content-Length:{}\r\n\r\n{}", req_b.len(), &req_b);
+        let mut writer = self.writer.lock().unwrap();
+        writer.write_all(headers.as_bytes()).await?;
+        writer.flush().await?;
 
         Ok(id)
     }

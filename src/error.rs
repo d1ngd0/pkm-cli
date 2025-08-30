@@ -2,6 +2,9 @@ use std::sync::Arc;
 
 use skim::SkimItem;
 use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
+
+use crate::lsp::Response;
 
 // Result is a convienince type for T, pkm::Error
 pub type Result<T> = std::result::Result<T, Error>;

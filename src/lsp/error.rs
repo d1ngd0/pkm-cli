@@ -25,4 +25,9 @@ pub enum Error {
 
     #[error("UTF8 Error {0}")]
     UTF8Error(#[from] Utf8Error),
+
+    #[error("Send Error: {0}")]
+    SendError(#[from] tokio::sync::mpsc::error::SendError<super::Response>),
+    #[error("Recieve Error: {0}")]
+    RecieveError(#[from] tokio::sync::mpsc::error::TryRecvError),
 }

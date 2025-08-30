@@ -32,4 +32,5 @@ syntect = "5.2.0"
 tantivy = "0.24.2"
 tera = "1.20.0"
 thiserror = "2.0.12"
+tokio = { version = "1.47.1", features = ["full"] }
 walkdir = "2.5.0"

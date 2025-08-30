@@ -125,7 +125,8 @@ fn cli() -> Command {
         )
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
 
     let matches = cli().get_matches();
@@ -135,7 +136,7 @@ fn main() {
         Some(("zettel", sub_matches)) => run_zettel(sub_matches, &repo),
         Some(("daily", sub_matches)) => run_daily(sub_matches, &repo),
         Some(("repo", sub_matches)) => run_repo(sub_matches, &repo),
-        Some(("favorites", sub_matches)) => run_favorites(sub_matches, &repo),
+        Some(("favorites", sub_matches)) => run_favorites(sub_matches, &repo).await,
         Some(("index", sub_matches)) => run_index(sub_matches, &repo),
         Some(("search", sub_matches)) => run_search(sub_matches, &repo),
         Some(("script", sub_matches)) => run_script(sub_matches, &repo),
@@ -409,14 +410,14 @@ where
     Ok(())
 }
 
-fn run_favorites<P>(_matches: &ArgMatches, repo: P) -> Result<()>
+async fn run_favorites<P>(_matches: &ArgMatches, repo: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
     let runner = StandardRunnerBuilder::new("markdown-oxide")
         .working_dir(repo.as_ref())
         .spawn()?;
-    let mut lsp = LSP::new(runner, repo.as_ref())?;
+    let mut lsp = LSP::new(runner, repo.as_ref()).await?;
 
     let mut favorites = PathBuf::from(repo.as_ref());
     favorites.push("favorites.md");
@@ -439,11 +440,14 @@ where
                 String::from("could not get zettel from favorites"),
             ))?;
 
-            if let Ok(resp) = lsp.goto_defintion(
-                favorites.as_path(),
-                zettel.position.as_ref().unwrap().start.line as u32 - 1,
-                zettel.position.as_ref().unwrap().start.column as u32 - 1,
-            ) {
+            if let Ok(resp) = lsp
+                .goto_defintion(
+                    favorites.as_path(),
+                    zettel.position.as_ref().unwrap().start.line as u32 - 1,
+                    zettel.position.as_ref().unwrap().start.column as u32 - 1,
+                )
+                .await
+            {
                 match resp {
                     Scalar(location) => finder.add_fq_doc(location.uri)?,
                     Array(locations) => {

@@ -3,7 +3,7 @@ mod request;
 mod response;
 mod runner_standard;
 
-use std::{path::Path, str::FromStr, thread, time::Duration};
+use std::{path::Path, str::FromStr};
 
 pub use error::*;
 use lsp_types::{
@@ -18,35 +18,20 @@ pub use response::*;
 pub use runner_standard::*;
 use serde::Serialize;
 
-pub trait Sender {
+pub trait Requester {
     // send sends the request to the LSP and returns the RequestID for the request
     // This enables the application to continue after the request has been made instead
     // of blocking. If you want to block use the provided `request`
-    fn send<S, R>(&mut self, msg: R) -> Result<RequestID>
+    async fn send<S, R>(&mut self, msg: R) -> Result<RequestID>
     where
         S: Serialize,
         R: Into<Request<S>>;
 }
 // Runner defines the required functions to interact with an LSP
 pub trait Runner {
-    type Sender: Sender;
-    // try_response will try to get the response from the endpoint, if it can't
-    // it must return a NotReady error to let the caller know we aren't ready yet
-    fn try_response(&mut self, req_id: RequestID) -> Result<Response>;
+    type Sender: Requester;
 
-    fn response(&mut self, req_id: RequestID) -> Result<Response> {
-        let mut resp = self.try_response(req_id);
-        loop {
-            match resp {
-                Ok(r) => return Ok(r),
-                Err(Error::NotReady) => {
-                    thread::sleep(Duration::from_millis(10));
-                    resp = self.try_response(req_id.into());
-                }
-                Err(err) => return Err(err),
-            }
-        }
-    }
+    async fn response(&mut self, req_id: RequestID) -> Result<Response>;
 
     // create a sender for this implementation of the runner
     fn sender(&mut self) -> Result<Self::Sender>;
@@ -60,11 +45,11 @@ pub struct LSP<R: Runner> {
 }
 
 impl<R: Runner> LSP<R> {
-    pub fn new<P: AsRef<Path>>(mut runner: R, workspace: P) -> Result<LSP<R>> {
+    pub async fn new<P: AsRef<Path>>(mut runner: R, workspace: P) -> Result<LSP<R>> {
         let sender = runner.sender()?;
         let mut lsp = LSP { runner, sender };
 
-        lsp.init(workspace)?;
+        lsp.init(workspace).await?;
 
         Ok(lsp)
     }
@@ -72,7 +57,7 @@ impl<R: Runner> LSP<R> {
     // initialize the LSP. Allow deprecated since there are parameters that are
     // deprecated but I have to define them
     #[allow(deprecated)]
-    fn init<P: AsRef<Path>>(&mut self, workspace: P) -> Result<()> {
+    async fn init<P: AsRef<Path>>(&mut self, workspace: P) -> Result<()> {
         let workspace = workspace.as_ref().to_string_lossy();
         let init = InitializeParams {
             process_id: None,
@@ -97,12 +82,12 @@ impl<R: Runner> LSP<R> {
         };
 
         let req = Request::from_serializable(Initialize::METHOD, init)?;
-        let id = self.sender.send(req)?;
-        self.runner.response(id)?;
+        let id = self.sender.send(req).await?;
+        self.runner.response(id).await?;
         Ok(())
     }
 
-    pub fn goto_defintion<P: AsRef<Path>>(
+    pub async fn goto_defintion<P: AsRef<Path>>(
         &mut self,
         uri: P,
         line: u32,
@@ -126,12 +111,12 @@ impl<R: Runner> LSP<R> {
             },
         };
         let req = Request::from_serializable(GotoDefinition::METHOD, params)?;
-        let id = self.sender.send(req)?;
+        let id = self.sender.send(req).await?;
 
-        self.runner.response(id)?.result()
+        self.runner.response(id).await?.result()
     }
 
-    pub fn open_virtual<P: AsRef<Path>>(
+    pub async fn open_virtual<P: AsRef<Path>>(
         &mut self,
         uri: P,
         content: String,
@@ -147,7 +132,7 @@ impl<R: Runner> LSP<R> {
             },
         };
         let req = Request::from_serializable(DidOpenTextDocument::METHOD, params)?;
-        let _id = self.sender.send(req)?;
+        let _id = self.sender.send(req).await?;
         Ok(())
     }
 }

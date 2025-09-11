@@ -8,7 +8,10 @@ use std::{
 
 use chrono::{DateTime, Local, TimeZone};
 use clap::{ArgMatches, Command, ValueHint, arg, value_parser};
-use clap_complete::aot::{Shell, generate};
+use clap_complete::{
+    ArgValueCompleter, CompletionCandidate,
+    aot::{Shell, generate},
+};
 use human_date_parser::ParseResult;
 use inquire::Text;
 use log::error;
@@ -118,6 +121,41 @@ fn cli() -> Command {
                 .arg(arg!(MAX_HEIGHT: --"max-height" <HEIGHT>).required(false).default_value("1000").value_parser(clap::value_parser!(u32)))
                 .about("Add an image to the repo and echo the path")
         )
+        .subcommand(
+            Command::new("export")
+            .alias("ex")
+            .arg(arg!(ZTL: <ZETTEL> "The zettel that we want to export as a stand alone thing").add(ArgValueCompleter::new(zettel_completer)))
+        )
+}
+
+fn zettel_completer(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let matches = cli().get_matches();
+    let repo = matches.get_one::<String>("REPO").expect("repo required");
+    let pkm = if let Ok(pkm) = PKMBuilder::new(&repo).parse_args(&matches).build() {
+        pkm
+    } else {
+        return vec![CompletionCandidate::new("")];
+    };
+
+    let handle = tokio::runtime::Handle::current();
+    let mut lsp = handle.block_on(pkm.lsp()).unwrap();
+
+    let current = format!("[[{}]]", current.to_string_lossy());
+    let vfile = lsp.virtual_file_builder().content(Some(&current));
+    let _vfile = handle.block_on(vfile.build()).unwrap();
+
+    let mut completions = vec![];
+
+    if "foo".starts_with(&current) {
+        completions.push(CompletionCandidate::new("foo"));
+    }
+    if "bar".starts_with(&current) {
+        completions.push(CompletionCandidate::new("bar"));
+    }
+    if "baz".starts_with(&current) {
+        completions.push(CompletionCandidate::new("baz"));
+    }
+    completions
 }
 
 #[tokio::main]

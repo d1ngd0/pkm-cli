@@ -160,6 +160,13 @@ impl PKM {
         ZettelBuilder::new(&self.zettel_dir)
     }
 
+    pub async fn lsp(&self) -> Result<LSP<StandardRunner>> {
+        let runner = StandardRunnerBuilder::new("markdown-oxide")
+            .working_dir(self.root.as_path())
+            .spawn()?;
+        Ok(LSP::new(runner, self.root.as_path()).await?)
+    }
+
     pub fn daily(&self, date: &DateTime<Local>) -> Result<Zettel> {
         let mut context = Context::new();
         context.insert("date", &format!("{}", date.format("%A, %B %d, %Y")));
@@ -169,12 +176,5 @@ impl PKM {
             .id(id)
             .template(Some("daily"))
             .aquire(&self.tmpl, &context)
-    }
-
-    pub async fn lsp(&self) -> Result<LSP<StandardRunner>> {
-        let runner = StandardRunnerBuilder::new("markdown-oxide")
-            .working_dir(self.root.as_path())
-            .spawn()?;
-        Ok(LSP::new(runner, self.root.as_path()).await?)
     }
 }

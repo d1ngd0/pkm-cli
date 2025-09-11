@@ -1919,6 +1919,7 @@ dependencies = [
  "lsp-types",
  "markdown",
  "mdast_util_to_markdown",
+ "rand 0.9.2",
  "regex",
  "serde",
  "serde_json",

@@ -2,26 +2,28 @@ mod error;
 mod request;
 mod response;
 mod runner_standard;
+mod virtual_file;
 
 use std::{path::Path, str::FromStr};
 
 pub use error::*;
 use lsp_types::{
-    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
-    PartialResultParams, Position, TextDocumentIdentifier, TextDocumentPositionParams, Uri,
-    WorkDoneProgressParams, WorkspaceFolder,
-    notification::{DidOpenTextDocument, Notification as _},
+    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, PartialResultParams, Position,
+    TextDocumentIdentifier, TextDocumentPositionParams, Uri, WorkDoneProgressParams,
+    WorkspaceFolder,
     request::{GotoDefinition, Initialize, Request as rt},
 };
 pub use request::*;
 pub use response::*;
 pub use runner_standard::*;
 use serde::Serialize;
+pub use virtual_file::*;
 
 pub trait Requester {
     // send sends the request to the LSP and returns the RequestID for the request
     // This enables the application to continue after the request has been made instead
     // of blocking. If you want to block use the provided `request`
+    #[allow(async_fn_in_trait)]
     async fn send<S, R>(&mut self, msg: R) -> Result<RequestID>
     where
         S: Serialize,
@@ -31,6 +33,7 @@ pub trait Requester {
 pub trait Runner {
     type Sender: Requester;
 
+    #[allow(async_fn_in_trait)]
     async fn response(&mut self, req_id: RequestID) -> Result<Response>;
 
     // create a sender for this implementation of the runner
@@ -41,7 +44,7 @@ pub type RequestID = u32;
 
 pub struct LSP<R: Runner> {
     runner: R,
-    sender: R::Sender,
+    pub sender: R::Sender,
 }
 
 impl<R: Runner> LSP<R> {
@@ -116,23 +119,7 @@ impl<R: Runner> LSP<R> {
         self.runner.response(id).await?.result()
     }
 
-    pub async fn open_virtual<P: AsRef<Path>>(
-        &mut self,
-        uri: P,
-        content: String,
-        language: String,
-    ) -> Result<()> {
-        let params = DidOpenTextDocumentParams {
-            text_document: lsp_types::TextDocumentItem {
-                uri: Uri::from_str(&format!("file://{}", uri.as_ref().to_string_lossy()))
-                    .or_else(|err| Err(Error::LSPError(format!("error: {}", err.to_string()))))?,
-                language_id: language,
-                version: 1,
-                text: content,
-            },
-        };
-        let req = Request::from_serializable(DidOpenTextDocument::METHOD, params)?;
-        let _id = self.sender.send(req).await?;
-        Ok(())
+    pub fn virtual_file_builder(&mut self) -> VirtualFileBuilder<R::Sender> {
+        VirtualFileBuilder::new(&mut self.sender)
     }
 }

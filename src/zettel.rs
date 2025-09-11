@@ -419,7 +419,10 @@ pub struct ZettelContent<'a> {
 
 impl<'a> ZettelContent<'a> {
     pub fn append(&mut self, child: &str) -> Result<()> {
-        self.child.push_str("\n");
+        if !self.child.ends_with("\n") {
+            self.child.push_str("\n");
+        }
+
         self.child.push_str(child);
         Ok(())
     }

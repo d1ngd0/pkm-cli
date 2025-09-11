@@ -16,6 +16,7 @@ pub use editor::*;
 pub use error::*;
 pub use finder::*;
 pub use image::*;
+use lsp::{LSP, StandardRunner, StandardRunnerBuilder};
 pub use syntax::*;
 use tera::{Context, Tera};
 pub use zettel::*;
@@ -143,7 +144,7 @@ impl<'a> PKMBuilder<'a> {
 }
 
 pub struct PKM {
-    root: PathBuf,
+    pub root: PathBuf,
     pub tmpl: Tera,
     daily_dir: PathBuf,
     image_dir: PathBuf,
@@ -168,5 +169,12 @@ impl PKM {
             .id(id)
             .template(Some("daily"))
             .aquire(&self.tmpl, &context)
+    }
+
+    pub async fn lsp(&self) -> Result<LSP<StandardRunner>> {
+        let runner = StandardRunnerBuilder::new("markdown-oxide")
+            .working_dir(self.root.as_path())
+            .spawn()?;
+        Ok(LSP::new(runner, self.root.as_path()).await?)
     }
 }

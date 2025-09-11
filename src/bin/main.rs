@@ -2,8 +2,8 @@ use std::{
     ffi::OsStr,
     fs::{self, read_to_string},
     io::stdout,
-    path::{Path, PathBuf},
-    process::Stdio,
+    path::PathBuf,
+    process::{ExitCode, Stdio},
 };
 
 use chrono::{DateTime, Local, TimeZone};
@@ -15,7 +15,7 @@ use log::error;
 use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
-    Editor, Error, Finder, FinderItem, PKMBuilder, Result, ZettelIDBuilder, ZettelIndex,
+    Editor, Error, Finder, FinderItem, PKM, PKMBuilder, Result, ZettelIDBuilder, ZettelIndex,
     ZettelReference, first_node, first_within_child,
     lsp::{LSP, StandardRunnerBuilder},
     path_to_id,
@@ -43,14 +43,14 @@ fn cli() -> Command {
     Command::new("pkm")
         .about("A PKM management CLI")
         .arg(arg!(REPO: -r --repo <REPO> "The root directory of the pkm").env(default_repo))
+        .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
+        .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
+        .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
+        .arg(arg!(IMG_DIR: --"img-dir" [IMG_DIR] "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
         .subcommand(
             Command::new("zettel")
                 .about("Create a new zettel")
                 .alias("ztl")
-                .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
-                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
-                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
-                .arg(arg!(IMG_DIR: --"img-dir" [IMG_DIR] "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("default"))
                 .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
                 .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
@@ -63,10 +63,6 @@ fn cli() -> Command {
             Command::new("daily")
                 .about("open the daily file")
                 .alias("day")
-                .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
-                .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
-                .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
-                .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
                 .arg(arg!(TEMPLATE: -t --template [TEMPLATE] "The template of the zettel").default_value("daily"))
                 .arg(arg!(DATE: [DATE] "Human representation of a date for the dailly").default_value("today"))
                 .arg(arg!(NO_EDIT: --"no-edit" "Do not open in an editor once created"))
@@ -116,43 +112,54 @@ fn cli() -> Command {
         )
         .subcommand(
             Command::new("image")
-            .alias("img")
-                .arg(arg!(IMG_DIR: --"img-dir" <IMG_DIR> "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
-            .arg(arg!(IMG: <IMG>).value_hint(ValueHint::FilePath))
-            .arg(arg!(MAX_WIDTH: --"max-width" <WIDTH>).required(false).default_value("1400").value_parser(clap::value_parser!(u32)))
-            .arg(arg!(MAX_HEIGHT: --"max-height" <HEIGHT>).required(false).default_value("1000").value_parser(clap::value_parser!(u32)))
-            .about("Add an image to the repo and echo the path")
+                .alias("img")
+                .arg(arg!(IMG: <IMG>).value_hint(ValueHint::FilePath))
+                .arg(arg!(MAX_WIDTH: --"max-width" <WIDTH>).required(false).default_value("1400").value_parser(clap::value_parser!(u32)))
+                .arg(arg!(MAX_HEIGHT: --"max-height" <HEIGHT>).required(false).default_value("1000").value_parser(clap::value_parser!(u32)))
+                .about("Add an image to the repo and echo the path")
         )
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     env_logger::init();
 
     let matches = cli().get_matches();
-    let repo = matches.get_one::<String>("REPO").expect("repo required");
+    let pkm = PKMBuilder::new(matches.get_one::<String>("REPO").expect("repo required"))
+        .parse_args(&matches)
+        .build();
+
+    let pkm = match pkm {
+        Err(err) => {
+            error!("{}", err);
+            return ExitCode::FAILURE;
+        }
+        Ok(val) => val,
+    };
 
     let res = match matches.subcommand() {
-        Some(("zettel", sub_matches)) => run_zettel(sub_matches, &repo),
-        Some(("daily", sub_matches)) => run_daily(sub_matches, &repo),
-        Some(("repo", sub_matches)) => run_repo(sub_matches, &repo),
-        Some(("favorites", sub_matches)) => run_favorites(sub_matches, &repo).await,
-        Some(("index", sub_matches)) => run_index(sub_matches, &repo),
-        Some(("search", sub_matches)) => run_search(sub_matches, &repo),
-        Some(("script", sub_matches)) => run_script(sub_matches, &repo),
-        Some(("image", submatches)) => run_image(submatches, &repo),
+        Some(("zettel", sub_matches)) => run_zettel(sub_matches, &pkm),
+        Some(("daily", sub_matches)) => run_daily(sub_matches, &pkm),
+        Some(("repo", sub_matches)) => run_repo(sub_matches, &pkm),
+        Some(("favorites", sub_matches)) => run_favorites(sub_matches, &pkm).await,
+        Some(("index", sub_matches)) => run_index(sub_matches, &pkm),
+        Some(("search", sub_matches)) => run_search(sub_matches, &pkm),
+        Some(("script", sub_matches)) => run_script(sub_matches, &pkm),
+        Some(("image", submatches)) => run_image(submatches, &pkm),
         Some(("completion", submatches)) => run_completion(submatches),
-        None => run_editor(&matches, &repo),
+        None => run_editor(&matches, &pkm),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
     };
 
     if let Err(err) = res {
-        error!("{}", err)
+        error!("{}", err);
+        return ExitCode::FAILURE;
     }
+
+    ExitCode::SUCCESS
 }
 
-fn run_image<P: AsRef<Path>>(args: &ArgMatches, repo: P) -> Result<()> {
-    let pkm = PKMBuilder::new(&repo).parse_args(args).build()?;
+fn run_image(args: &ArgMatches, pkm: &PKM) -> Result<()> {
     let current_date = Local::now();
 
     let img = pkm
@@ -164,7 +171,7 @@ fn run_image<P: AsRef<Path>>(args: &ArgMatches, repo: P) -> Result<()> {
 
     println!(
         "{}",
-        img.rel_path(&repo)
+        img.rel_path(pkm.root.as_path())
             .expect("we just put it into that directory")
             .to_string_lossy()
     );
@@ -199,25 +206,17 @@ fn build_context_args(args: &ArgMatches) -> Context {
     context
 }
 
-fn run_editor<P>(_matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    Editor::new_from_env("EDITOR", repo.as_ref())
+fn run_editor(_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
+    Editor::new_from_env("EDITOR", pkm.root.as_path())
         .file("README.md")
         .exec()?;
     Ok(())
 }
 
-fn run_zettel<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
+fn run_zettel(sub_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     let current_date = Local::now();
     let mut context = build_context_args(sub_matches);
     let date_reg = Regex::new(DATE_REGEX).expect("must compile");
-
-    let pkm = PKMBuilder::new(&repo).parse_args(sub_matches).build()?;
 
     let id = ZettelIDBuilder::new()
         .parse_args(sub_matches, &current_date)
@@ -254,10 +253,10 @@ where
     daily.sync()?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
-        println!("{}", zettel.rel_path(repo.as_ref())?.to_string_lossy())
+        println!("{}", zettel.rel_path(pkm.root.as_path())?.to_string_lossy())
     } else {
-        Editor::new_from_env("EDITOR", repo.as_ref())
-            .file(zettel.rel_path(repo.as_ref())?)
+        Editor::new_from_env("EDITOR", pkm.root.as_path())
+            .file(zettel.rel_path(pkm.root.as_path())?)
             .exec()?;
     }
 
@@ -276,34 +275,27 @@ fn parse_human_date(date: &str) -> Result<DateTime<Local>> {
     Ok(Local.from_local_datetime(&current_date).unwrap())
 }
 
-fn run_daily<P>(sub_matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
+fn run_daily(sub_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     let current_date = parse_human_date(sub_matches.get_one::<String>("DATE").expect("defaulted"))?;
-    let pkm = PKMBuilder::new(&repo).parse_args(sub_matches).build()?;
     let daily = pkm.daily(&current_date)?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
-        println!("{}", daily.rel_path(repo.as_ref())?.to_string_lossy())
+        println!("{}", daily.rel_path(pkm.root.as_path())?.to_string_lossy())
     } else {
-        Editor::new_from_env("EDITOR", repo.as_ref())
-            .file(daily.rel_path(repo.as_ref())?)
+        Editor::new_from_env("EDITOR", pkm.root.as_path())
+            .file(daily.rel_path(pkm.root.as_path())?)
             .exec()?;
     }
 
     Ok(())
 }
 
-fn run_repo<P>(matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
+fn run_repo(matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     std::process::Command::new("git")
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .current_dir(repo)
+        .current_dir(pkm.root.as_path())
         .args(
             matches
                 .get_many::<String>("VARS")
@@ -314,10 +306,7 @@ where
     Ok(())
 }
 
-fn run_script<P>(matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
+fn run_script(matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     let mut arguments = matches
         .get_many::<String>("VARS")
         .expect("arguments required")
@@ -330,7 +319,7 @@ where
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .current_dir(repo)
+        .current_dir(pkm.root.as_path())
         .args(arguments)
         .status()?;
 
@@ -338,17 +327,14 @@ where
 }
 
 // run_index creates/updates the index
-fn run_index<P>(_matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let index = ZettelIndex::new(repo.as_ref())?;
+fn run_index(_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
+    let index = ZettelIndex::new(pkm.root.as_path())?;
     let mut writer = index.doc_indexer()?;
 
     // TODO: be smarter
     writer.clear()?;
 
-    for doc in WalkDir::new(repo.as_ref()) {
+    for doc in WalkDir::new(pkm.root.as_path()) {
         let doc = match doc {
             Err(err) => {
                 error!("issue indexing {}", err);
@@ -373,11 +359,8 @@ where
     Ok(())
 }
 
-fn run_search<P>(_matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let index = ZettelIndex::new(repo.as_ref())?;
+fn run_search(_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
+    let index = ZettelIndex::new(pkm.root.as_path())?;
     loop {
         let query = Text::new(" >").with_placeholder("Query").prompt()?;
         let docs = match index.doc_searcher()?.find(&query) {
@@ -388,9 +371,9 @@ where
             }
         };
 
-        let mut finder = Finder::new(repo.as_ref());
+        let mut finder = Finder::new(pkm.root.as_path());
         for doc in docs {
-            let mut full_path = PathBuf::from(repo.as_ref());
+            let mut full_path = PathBuf::from(pkm.root.as_path());
             full_path.push(doc.get("uri").expect("schema should have uri"));
 
             let content = read_to_string(&full_path)?;
@@ -410,16 +393,8 @@ where
     Ok(())
 }
 
-async fn run_favorites<P>(_matches: &ArgMatches, repo: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let runner = StandardRunnerBuilder::new("markdown-oxide")
-        .working_dir(repo.as_ref())
-        .spawn()?;
-    let mut lsp = LSP::new(runner, repo.as_ref()).await?;
-
-    let mut favorites = PathBuf::from(repo.as_ref());
+async fn run_favorites(_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
+    let mut favorites = PathBuf::from(pkm.root.as_path());
     favorites.push("favorites.md");
     let fcontent = fs::read_to_string(favorites.as_path())?;
 
@@ -433,7 +408,9 @@ where
     iter.next()
         .ok_or(Error::NotFound(String::from("favorite expected a header")))?; // drop the header
 
-    let mut finder = Finder::new(repo.as_ref());
+    let mut lsp = pkm.lsp().await?;
+
+    let mut finder = Finder::new(pkm.root.as_path());
     for row in iter {
         if let Node::TableRow(row) = row {
             let zettel = first_within_child!(0, row, Node::Text).ok_or(Error::NotFound(

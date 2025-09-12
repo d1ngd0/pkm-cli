@@ -8,10 +8,10 @@ use std::{path::Path, str::FromStr};
 
 pub use error::*;
 use lsp_types::{
-    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, PartialResultParams, Position,
-    TextDocumentIdentifier, TextDocumentPositionParams, Uri, WorkDoneProgressParams,
-    WorkspaceFolder,
-    request::{GotoDefinition, Initialize, Request as rt},
+    CompletionParams, CompletionResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    InitializeParams, PartialResultParams, Position, TextDocumentIdentifier,
+    TextDocumentPositionParams, Uri, WorkDoneProgressParams, WorkspaceFolder,
+    request::{Completion, GotoDefinition, Initialize, Request as rt},
 };
 pub use request::*;
 pub use response::*;
@@ -121,5 +121,35 @@ impl<R: Runner> LSP<R> {
 
     pub fn virtual_file_builder(&mut self) -> VirtualFileBuilder<R::Sender> {
         VirtualFileBuilder::new(&mut self.sender)
+    }
+
+    pub async fn completion<P: AsRef<Path>>(
+        &mut self,
+        uri: P,
+        line: u32,
+        character: u32,
+    ) -> Result<CompletionResponse> {
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: Uri::from_str(&format!("file://{}", uri.as_ref().to_string_lossy()))
+                        .or_else(|err| {
+                            Err(Error::LSPError(format!("error: {}", err.to_string())))
+                        })?,
+                },
+                position: Position { line, character },
+            },
+            work_done_progress_params: WorkDoneProgressParams {
+                work_done_token: None,
+            },
+            partial_result_params: PartialResultParams {
+                partial_result_token: None,
+            },
+            context: None,
+        };
+        let req = Request::from_serializable(Completion::METHOD, params)?;
+        let id = self.sender.send(req).await?;
+
+        self.runner.response(id).await?.result()
     }
 }

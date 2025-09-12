@@ -19,9 +19,7 @@ use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
     Editor, Error, Finder, FinderItem, PKM, PKMBuilder, Result, ZettelIDBuilder, ZettelIndex,
-    ZettelReference, first_node, first_within_child,
-    lsp::{LSP, StandardRunnerBuilder},
-    path_to_id,
+    ZettelReference, first_node, first_within_child, path_to_id,
 };
 use regex::Regex;
 use tera::Context;
@@ -134,7 +132,7 @@ fn zettel_completer(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
     let pkm = if let Ok(pkm) = PKMBuilder::new(&repo).parse_args(&matches).build() {
         pkm
     } else {
-        return vec![CompletionCandidate::new("")];
+        return vec![];
     };
 
     let handle = tokio::runtime::Handle::current();
@@ -142,20 +140,27 @@ fn zettel_completer(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
 
     let current = format!("[[{}]]", current.to_string_lossy());
     let vfile = lsp.virtual_file_builder().content(Some(&current));
-    let _vfile = handle.block_on(vfile.build()).unwrap();
+    let vfile = handle.block_on(vfile.build()).unwrap();
+    let vfile = vfile.path;
 
-    let mut completions = vec![];
+    let mut autocompletions = vec![];
 
-    if "foo".starts_with(&current) {
-        completions.push(CompletionCandidate::new("foo"));
+    let completions = handle.block_on(lsp.completion(&vfile, 1, 2)).unwrap();
+
+    match completions {
+        lsp_types::CompletionResponse::Array(completion_items) => {
+            for item in completion_items {
+                autocompletions.push(CompletionCandidate::new(item.label));
+            }
+        }
+        lsp_types::CompletionResponse::List(completion_list) => {
+            for item in completion_list.items {
+                autocompletions.push(CompletionCandidate::new(item.label));
+            }
+        }
     }
-    if "bar".starts_with(&current) {
-        completions.push(CompletionCandidate::new("bar"));
-    }
-    if "baz".starts_with(&current) {
-        completions.push(CompletionCandidate::new("baz"));
-    }
-    completions
+
+    autocompletions
 }
 
 #[tokio::main]
@@ -184,6 +189,7 @@ async fn main() -> ExitCode {
         Some(("search", sub_matches)) => run_search(sub_matches, &pkm),
         Some(("script", sub_matches)) => run_script(sub_matches, &pkm),
         Some(("image", submatches)) => run_image(submatches, &pkm),
+        Some(("export", submatches)) => run_export(submatches, &pkm),
         Some(("completion", submatches)) => run_completion(submatches),
         None => run_editor(&matches, &pkm),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
@@ -195,6 +201,10 @@ async fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+fn run_export(_args: &ArgMatches, _pkm: &PKM) -> Result<()> {
+    Ok(())
 }
 
 fn run_image(args: &ArgMatches, pkm: &PKM) -> Result<()> {

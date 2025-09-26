@@ -127,17 +127,15 @@ impl<'a> ZettelIDBuilder<'a> {
         }
     }
 
-    pub fn title<S>(mut self, title: Option<S>) -> Self
+    pub fn title<S>(mut self, title: Option<S>, case: Option<Case>) -> Self
     where
         S: AsRef<str>,
     {
-        self.title = title.map(|v| {
-            v.as_ref()
-                .replace('\n', "")
-                .replace('\r', "")
-                .to_case(Case::Train)
-                .to_lowercase()
-        });
+        self.title = title.map(|v| v.as_ref().replace('\n', "").replace('\r', ""));
+        if let Some(case) = case {
+            self.title = self.title.map(|v| v.to_case(case))
+        }
+
         self
     }
 
@@ -176,7 +174,7 @@ impl<'a> ZettelIDBuilder<'a> {
     // MEETING: bool Sets the date and `meeting` tag
     // FLEETING: bool Sets the `fleeting` tag
     pub fn parse_args(self, args: &ArgMatches, date: &DateTime<Local>) -> Self {
-        let mut this = self.title(args.get_one::<String>("TITLE"));
+        let mut this = self.title(args.get_one::<String>("TITLE"), None);
 
         if let Some(true) = args.get_one::<bool>("DATE") {
             this = this.date(&date);

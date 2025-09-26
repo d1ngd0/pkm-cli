@@ -55,6 +55,7 @@ fn cli() -> Command {
                 .arg(arg!(MEETING: --meeting "mark the zettel as notes for a meeting"))
                 .arg(arg!(FLEETING: --fleeting "mark the zettel as fleeting notes"))
                 .arg(arg!(DATE: --date "put the date into the filename"))
+                .arg(arg!(HASH: --hash "put a hash in the filename"))
                 .arg(arg!(NO_EDIT: --"no-edit" "Do not open in an editor once created"))
                 .arg(arg!(TITLE: <TITLE> "The title of the zettel"))
                 .arg(arg!(VARS: ... "variables for the template (title:\"Hello World\")"))
@@ -220,7 +221,6 @@ fn run_zettel(sub_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
 
     let id = ZettelIDBuilder::new()
         .parse_args(sub_matches, &current_date)
-        .with_hash()
         .build()?;
 
     let mut reference_prefix = ZETTEL_ICON;

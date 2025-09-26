@@ -189,6 +189,11 @@ impl<'a> ZettelIDBuilder<'a> {
 
         if let Some(true) = args.get_one::<bool>("FLEETING") {
             this = this.tag("fleeting");
+            this = this.with_hash();
+        }
+
+        if let Some(true) = args.get_one::<bool>("HASH") {
+            this = this.with_hash();
         }
 
         this

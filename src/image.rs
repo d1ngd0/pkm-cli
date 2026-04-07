@@ -107,6 +107,10 @@ pub struct Image {
 }
 
 impl Image {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn rel_path<P: AsRef<Path>>(
         &self,
         parent: P,

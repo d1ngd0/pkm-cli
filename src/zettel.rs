@@ -385,6 +385,10 @@ impl Zettel {
         self.path.strip_prefix(parent)
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn content<'a>(&'a mut self) -> Result<ZettelContent<'a>> {
         let content = fs::read_to_string(&self.path)?;
         let child = self.content.insert(content);

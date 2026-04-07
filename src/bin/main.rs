@@ -2,7 +2,7 @@ use std::{
     ffi::OsStr,
     fs::{self, read_to_string},
     io::stdout,
-    path::PathBuf,
+    path::{PathBuf, absolute},
     process::{ExitCode, Stdio},
 };
 
@@ -16,9 +16,7 @@ use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
     Editor, Error, Finder, FinderItem, PKM, PKMBuilder, Result, ZettelIDBuilder, ZettelIndex,
-    ZettelReference, first_node, first_within_child,
-    lsp::{LSP, StandardRunnerBuilder},
-    path_to_id,
+    ZettelReference, first_node, first_within_child, path_to_id,
 };
 use regex::Regex;
 use tera::Context;
@@ -43,6 +41,7 @@ fn cli() -> Command {
     Command::new("pkm")
         .about("A PKM management CLI")
         .arg(arg!(REPO: -r --repo <REPO> "The root directory of the pkm").env(default_repo))
+        .arg(arg!(REFERENCE_FILE: --"repo-reference-file" <REFERENCE_FILE> "Find the root git repo from the reference file"))
         .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
         .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
         .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
@@ -126,9 +125,16 @@ async fn main() -> ExitCode {
     env_logger::init();
 
     let matches = cli().get_matches();
-    let pkm = PKMBuilder::new(matches.get_one::<String>("REPO").expect("repo required"))
-        .parse_args(&matches)
-        .build();
+
+    let repo = repo_from_reference(
+        matches
+            .get_one::<String>("REFERENCE_FILE")
+            .map(|s| s.as_str()),
+    )
+    .or_else(|| matches.get_one::<String>("REPO").map(PathBuf::from))
+    .expect("repo required");
+
+    let pkm = PKMBuilder::new(&repo).parse_args(&matches).build();
 
     let pkm = match pkm {
         Err(err) => {
@@ -170,12 +176,7 @@ fn run_image(args: &ArgMatches, pkm: &PKM) -> Result<()> {
         .max_height(args.get_one::<u32>("MAX_HEIGHT").copied())
         .build(args.get_one::<String>("IMG").expect("required"))?;
 
-    println!(
-        "{}",
-        img.rel_path(pkm.root.as_path())
-            .expect("we just put it into that directory")
-            .to_string_lossy()
-    );
+    println!("{}", img.path().to_string_lossy());
     Ok(())
 }
 
@@ -253,7 +254,7 @@ fn run_zettel(sub_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     daily.sync()?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
-        println!("{}", zettel.rel_path(pkm.root.as_path())?.to_string_lossy())
+        println!("{}", zettel.path().to_string_lossy())
     } else {
         Editor::new_from_env("EDITOR", pkm.root.as_path())
             .file(zettel.rel_path(pkm.root.as_path())?)
@@ -280,7 +281,7 @@ fn run_daily(sub_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     let daily = pkm.daily(&current_date)?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {
-        println!("{}", daily.rel_path(pkm.root.as_path())?.to_string_lossy())
+        println!("{}", daily.path().to_string_lossy())
     } else {
         Editor::new_from_env("EDITOR", pkm.root.as_path())
             .file(daily.rel_path(pkm.root.as_path())?)
@@ -441,4 +442,23 @@ async fn run_favorites(_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     finder.run()?;
 
     Ok(())
+}
+
+fn repo_from_reference(refer: Option<&str>) -> Option<PathBuf> {
+    let refer = if let Some(refer) = refer {
+        refer
+    } else {
+        return None;
+    };
+
+    let mut buf = PathBuf::from(refer);
+    while buf.pop() {
+        let mut git_path = buf.clone();
+        git_path.push(".git");
+        if git_path.exists() {
+            return Some(buf);
+        }
+    }
+
+    return None;
 }

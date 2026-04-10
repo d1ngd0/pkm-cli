@@ -118,6 +118,12 @@ fn cli() -> Command {
                 .arg(arg!(MAX_HEIGHT: --"max-height" <HEIGHT>).required(false).default_value("1000").value_parser(clap::value_parser!(u32)))
                 .about("Add an image to the repo and echo the path")
         )
+        .subcommand(
+            Command::new("move")
+                .arg(arg!(ZTL: <ZTL>).value_hint(ValueHint::FilePath))
+                .arg(arg!(REPO: <REPO>).value_hint(ValueHint::DirPath))
+                .about("Move a zettel from one repo to a different repo")
+        )
 }
 
 #[tokio::main]
@@ -153,6 +159,7 @@ async fn main() -> ExitCode {
         Some(("search", sub_matches)) => run_search(sub_matches, &pkm),
         Some(("script", sub_matches)) => run_script(sub_matches, &pkm),
         Some(("image", submatches)) => run_image(submatches, &pkm),
+        Some(("move", submatches)) => run_move(submatches, &pkm),
         Some(("completion", submatches)) => run_completion(submatches),
         None => run_editor(&matches, &pkm),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
@@ -165,6 +172,8 @@ async fn main() -> ExitCode {
 
     ExitCode::SUCCESS
 }
+
+fn run_move(args: &ArgMatches, pkm: &PKM) -> Result<()> {}
 
 fn run_image(args: &ArgMatches, pkm: &PKM) -> Result<()> {
     let current_date = Local::now();

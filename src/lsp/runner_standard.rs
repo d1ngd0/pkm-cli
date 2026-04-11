@@ -3,6 +3,7 @@ use std::{
     ffi::OsStr,
     path::Path,
     process::Stdio,
+    str::from_utf8,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU32, Ordering},
@@ -16,7 +17,9 @@ use tokio::{
     sync::mpsc::{Receiver, Sender, channel},
 };
 
-use super::{Error, Request, RequestID, Requester, Response, Result, Runner};
+use crate::lsp::Response;
+
+use super::{Error, Notification, Request, RequestID, Requester, Result, Runner};
 
 pub struct StandardRunnerBuilder {
     cmd: Command,
@@ -76,7 +79,11 @@ impl StandardRunner {
             StandardRunnerReader::new(child.stdout.take().expect("stdout will be there"));
         let writer = Arc::new(Mutex::new(child.stdin.take().expect("stdin will be there")));
 
-        tokio::spawn(async move { reader.start().await });
+        tokio::spawn(async move {
+            if let Err(err) = reader.start().await {
+                log::error!("LSP Error: {}", err)
+            }
+        });
 
         StandardRunner {
             responses: HashMap::new(),
@@ -94,7 +101,9 @@ impl Runner for StandardRunner {
         loop {
             match self.recv.recv().await {
                 Some(resp) => {
-                    self.responses.insert(resp.id, resp);
+                    if let Some(id) = resp.id {
+                        self.responses.insert(id, resp);
+                    }
                 }
                 None => return Err(Error::LSPError(String::from("reciever closed"))),
             }
@@ -135,9 +144,10 @@ impl<R: AsyncRead + Unpin> StandardRunnerReader<R> {
     async fn start(&mut self) -> Result<()> {
         loop {
             // if there is a read failure of some kind we return and close the routine
-            let res = self.read_response().await?;
+            if let Ok(res) = self.read_response().await {
+                self.sync.send(res).await?;
+            }
             // if their is no reciever because it was dropped we return and close the routine
-            self.sync.send(res).await?;
         }
     }
 
@@ -165,6 +175,7 @@ impl<R: AsyncRead + Unpin> StandardRunnerReader<R> {
         let mut body = vec![0; length];
         self.reader.read_exact(&mut body).await?;
 
+        log::debug!("LSP Recieved:\n{}", from_utf8(&body)?);
         Ok(Response::new(headers, &body)?)
     }
 }
@@ -181,6 +192,22 @@ impl StandardRunnerWriter {
 }
 
 impl Requester for StandardRunnerWriter {
+    async fn notify<S, N>(&mut self, msg: N) -> Result<()>
+    where
+        S: Serialize,
+        N: Into<Notification<S>>,
+    {
+        let msg = msg.into();
+        let req_b = serde_json::to_string(&msg)?;
+
+        let req = format!("Content-Length:{}\r\n\r\n{}", req_b.len(), &req_b);
+        log::debug!("LSP Notification:\n{}", req);
+        let mut writer = self.writer.lock().unwrap();
+        writer.write_all(req.as_bytes()).await?;
+        writer.flush().await?;
+
+        Ok(())
+    }
     async fn send<S, R>(&mut self, msg: R) -> Result<RequestID>
     where
         S: Serialize,
@@ -192,9 +219,10 @@ impl Requester for StandardRunnerWriter {
 
         let req_b = serde_json::to_string(&msg)?;
 
-        let headers = format!("Content-Length:{}\r\n\r\n{}", req_b.len(), &req_b);
+        let req = format!("Content-Length:{}\r\n\r\n{}", req_b.len(), &req_b);
+        log::debug!("LSP Request:\n{}", req);
         let mut writer = self.writer.lock().unwrap();
-        writer.write_all(headers.as_bytes()).await?;
+        writer.write_all(req.as_bytes()).await?;
         writer.flush().await?;
 
         Ok(id)

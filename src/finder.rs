@@ -9,7 +9,7 @@ use std::{
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use lsp_types::Uri;
 use markdown::{ParseOptions, mdast::Node};
-use skim::{ItemPreview, Skim, SkimItem, SkimOptions, prelude::SkimOptionsBuilder};
+use skim::{ItemPreview, Skim, SkimItem, SkimOptions, SkimOutput, prelude::SkimOptionsBuilder};
 
 pub struct Finder<P: AsRef<Path>> {
     repo: P,
@@ -76,6 +76,28 @@ impl<P: AsRef<Path>> Finder<P> {
 
     pub fn add<F: Into<FinderItem>>(&mut self, item: F) -> Result<()> {
         Ok(self.sender.send(Arc::new(item.into()))?)
+    }
+
+    pub fn select(self) -> Option<SkimOutput> {
+        Skim::run_with(&self.options, Some(self.receiver))
+    }
+
+    pub fn select_one(self) -> Option<Arc<dyn SkimItem + 'static>> {
+        let mut selection = if let Some(selection) = self.select() {
+            selection
+        } else {
+            return None;
+        };
+
+        if selection.is_abort {
+            return None;
+        }
+
+        if selection.selected_items.len() == 0 {
+            return None;
+        }
+
+        selection.selected_items.pop()
     }
 
     // run runs the finder and returns if we ran the editor

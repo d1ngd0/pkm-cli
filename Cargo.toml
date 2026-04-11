@@ -11,9 +11,9 @@ path = "src/bin/main.rs"
 chrono = "0.4.41"
 clap = { version = "4.5.42", features = ["derive", "env", ] }
 clap_complete = {version = "4.5.57", features = ["unstable-dynamic"]}
+colog = "1.4.0"
 convert_case = "0.8.0"
 crossbeam-channel = "0.5.15"
-env_logger = "0.11.8"
 fluent-uri = "0.3.2"
 hex = "0.4.3"
 human-date-parser = "0.3.1"

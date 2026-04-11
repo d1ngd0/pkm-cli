@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
-use super::Result;
-use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
+use crate::lsp::Error;
 
-#[derive(Serialize, Deserialize, Debug)]
+use super::Result;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::value::Value;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Response {
     // the headers for the response
-    #[serde(skip)]
+    #[serde(skip, default)]
     pub headers: HashMap<String, String>,
 
     // The version, this should always be 2.0
@@ -15,11 +17,20 @@ pub struct Response {
     version: String,
 
     // The id
-    pub id: u32,
+    pub id: Option<u32>,
 
     // The result, which we store the data for in a raw
     // value to be requested at query time
-    result: Box<RawValue>,
+    #[serde(flatten)]
+    payload: ResponsePayload,
+}
+
+#[derive(Deserialize, Debug, Clone, Serialize)]
+pub enum ResponsePayload {
+    #[serde(rename = "result")]
+    Result(Value),
+    #[serde(rename = "error")]
+    Error { code: isize, message: String },
 }
 
 impl Response {
@@ -29,7 +40,10 @@ impl Response {
         Ok(response)
     }
 
-    pub fn result<'a, D: Deserialize<'a>>(&'a self) -> Result<D> {
-        Ok(serde_json::from_str(self.result.get())?)
+    pub fn result<D: DeserializeOwned>(self) -> Result<D> {
+        match self.payload {
+            ResponsePayload::Result(result) => Ok(serde_json::from_value(result)?),
+            ResponsePayload::Error { code: _, message } => Err(Error::LSPError(message)),
+        }
     }
 }

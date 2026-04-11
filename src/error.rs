@@ -2,9 +2,6 @@ use std::sync::Arc;
 
 use skim::SkimItem;
 use thiserror::Error;
-use tokio::sync::mpsc::error::SendError;
-
-use crate::lsp::Response;
 
 // Result is a convienince type for T, pkm::Error
 pub type Result<T> = std::result::Result<T, Error>;
@@ -57,7 +54,7 @@ pub enum Error {
     #[error("Markdown Parsing Error: {0:?}")]
     MarkdownParserError(markdown::message::Message),
 
-    #[error("LSP Error: {0}")]
+    #[error("LSP Runtime Error: {0}")]
     LSPError(#[from] crate::lsp::Error),
 
     #[error("Serialization Error: {0}")]

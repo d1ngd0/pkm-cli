@@ -69,6 +69,18 @@ impl ZettelBuilder {
         self
     }
 
+    // open will open the zettel that is defined in the path
+    pub fn open(self) -> Result<Zettel> {
+        if self.path.exists() {
+            Ok(Zettel::new(self.path)?)
+        } else {
+            Err(Error::NotFound(format!(
+                "{:?} is not a valid zettel",
+                self.path
+            )))
+        }
+    }
+
     // aquire will create the date zettel or return the existing one if it
     // doesn't already exist.
     pub fn aquire<T, C>(self, tmpls: T, context: C) -> Result<Zettel>
@@ -77,7 +89,7 @@ impl ZettelBuilder {
         C: Borrow<Context>,
     {
         if self.path.exists() {
-            Ok(Zettel::new(self.path))
+            Ok(Zettel::new(self.path)?)
         } else {
             self.build(tmpls, context)
         }
@@ -93,18 +105,11 @@ impl ZettelBuilder {
             mut tmpl_name,
         } = self;
 
-        // create the directory if it doesn't exist
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?; // only creates the directories, not the file
-        }
-
         tmpl_name.push_str(".md");
 
-        let f = File::create(path.as_path())?;
-        tmpls.borrow().render_to(&tmpl_name, context.borrow(), &f)?;
-        f.sync_all()?;
-
-        Ok(Zettel::new(path))
+        let mut ztl = Zettel::new(path)?;
+        ztl.content = Some(tmpls.borrow().render(&tmpl_name, context.borrow())?);
+        ztl.sync()
     }
 }
 
@@ -365,17 +370,40 @@ enum ZettelIDPart<'a> {
     Hash(&'a str),
 }
 
+#[derive(Debug, Clone)]
 pub struct Zettel {
     path: PathBuf,
     content: Option<String>,
 }
 
 impl Zettel {
-    pub fn new<P: Into<PathBuf>>(path: P) -> Zettel {
-        Zettel {
-            path: path.into(),
-            content: None,
+    pub fn new<P: Into<PathBuf>>(path: P) -> Result<Zettel> {
+        let path: PathBuf = path.into();
+        let mut content = None;
+
+        if path.is_file() {
+            log::debug!("loading zettel content {:?}", &path);
+            content.replace(fs::read_to_string(&path)?);
         }
+
+        Ok(Zettel {
+            path: path,
+            content: content,
+        })
+    }
+
+    pub fn swap_parent_dir<Op, Np>(&self, old_prefix: Op, new_prefix: Np) -> Result<Zettel>
+    where
+        Op: AsRef<Path>,
+        Np: AsRef<Path>,
+    {
+        let mut new_path = PathBuf::from(new_prefix.as_ref());
+        new_path.push(self.path.strip_prefix(old_prefix)?);
+        log::debug!("{:?}", &new_path);
+        Ok(Zettel {
+            path: new_path,
+            content: self.content.clone(),
+        })
     }
 
     pub fn rel_path<P: AsRef<Path>>(
@@ -389,18 +417,34 @@ impl Zettel {
         &self.path
     }
 
-    pub fn content<'a>(&'a mut self) -> Result<ZettelContent<'a>> {
+    // content returns the underlying content of the zettel
+    pub fn content<'a>(&'a self) -> Option<ZettelContent<'a>> {
+        self.content
+            .as_ref()
+            .map(|content| ZettelContent { child: content })
+    }
+
+    pub fn mut_content<'a>(&'a mut self) -> Result<MutZettelContent<'a>> {
         let content = fs::read_to_string(&self.path)?;
         let child = self.content.insert(content);
 
-        Ok(ZettelContent { child })
+        Ok(MutZettelContent { child })
     }
 
-    pub fn sync(&mut self) -> Result<()> {
+    // sync writes the contents of the in-memory zettel to disk, consuming
+    // the object. It then reads the zettel of the disk and returns it
+    // for further use. This ensures all metadata (contents etc) are
+    // appropriatly reloaded after syncing.
+    pub fn sync(mut self) -> Result<Self> {
         let content = match self.content.take() {
             Some(v) => v,
-            None => return Ok(()),
+            None => return Ok(self),
         };
+
+        // create the directory if it doesn't exist
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?; // only creates the directories, not the file
+        }
 
         let mut file = File::options()
             .truncate(true)
@@ -410,7 +454,12 @@ impl Zettel {
         file.write_all(content.as_bytes())?;
         file.sync_all()?;
 
-        Ok(())
+        Zettel::new(&self.path)
+    }
+
+    // delete removed the zettel and consumes it in the process.
+    pub fn delete(self) -> Result<()> {
+        Ok(std::fs::remove_file(self.path)?)
     }
 }
 
@@ -420,11 +469,32 @@ impl AsRef<Zettel> for Zettel {
     }
 }
 
+impl Display for Zettel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.content.as_ref() {
+            Some(content) => write!(f, "{}", content),
+            None => write!(f, "{:?} is empty", self.path),
+        }
+    }
+}
+
 pub struct ZettelContent<'a> {
+    child: &'a String,
+}
+
+impl<'a> Deref for ZettelContent<'a> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.child
+    }
+}
+
+pub struct MutZettelContent<'a> {
     child: &'a mut String,
 }
 
-impl<'a> ZettelContent<'a> {
+impl<'a> MutZettelContent<'a> {
     pub fn append(&mut self, child: &str) -> Result<()> {
         if !self.child.ends_with("\n") {
             self.child.push_str("\n");
@@ -435,7 +505,7 @@ impl<'a> ZettelContent<'a> {
     }
 }
 
-impl<'a> ToString for ZettelContent<'a> {
+impl<'a> ToString for MutZettelContent<'a> {
     fn to_string(&self) -> String {
         self.child.to_string()
     }

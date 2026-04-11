@@ -86,14 +86,14 @@ impl<P: AsRef<Path>> ZettelIndex<P> {
         Ok(Self { index, parent: dir })
     }
 
-    pub fn doc_indexer(&self) -> Result<DocIndexer<P>> {
+    pub fn doc_indexer<'a>(&'a self) -> Result<DocIndexer<'a, P>> {
         Ok(DocIndexer {
             index: self,
             writer: self.index.writer(15_000_000)?,
         })
     }
 
-    pub fn doc_searcher(&self) -> Result<DocSearcher<P>> {
+    pub fn doc_searcher<'a>(&'a self) -> Result<DocSearcher<'a, P>> {
         Ok(DocSearcher {
             index: self,
             reader: self.index.reader()?,

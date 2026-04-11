@@ -2,21 +2,22 @@ use std::{
     ffi::OsStr,
     fs::{self, read_to_string},
     io::stdout,
-    path::{PathBuf, absolute},
+    ops::Deref,
+    path::PathBuf,
     process::{ExitCode, Stdio},
 };
 
 use chrono::{DateTime, Local, TimeZone};
-use clap::{ArgMatches, Command, ValueHint, arg, value_parser};
+use clap::{ArgAction, ArgMatches, Command, ValueHint, arg, value_parser};
 use clap_complete::aot::{Shell, generate};
 use human_date_parser::ParseResult;
 use inquire::Text;
-use log::error;
+use log::{LevelFilter, error};
 use lsp_types::GotoDefinitionResponse::{Array, Link, Scalar};
 use markdown::{ParseOptions, mdast::Node};
 use pkm::{
-    Editor, Error, Finder, FinderItem, PKM, PKMBuilder, Result, ZettelIDBuilder, ZettelIndex,
-    ZettelReference, first_node, first_within_child, path_to_id,
+    Editor, Error, Finder, FinderItem, PKM, PKMBuilder, Result, Zettel, ZettelIDBuilder,
+    ZettelIndex, ZettelReference, first_node, first_within_child, path_to_id,
 };
 use regex::Regex;
 use tera::Context;
@@ -40,12 +41,13 @@ fn cli() -> Command {
 
     Command::new("pkm")
         .about("A PKM management CLI")
+        .arg(arg!(-v --verbose "-v Warning, -vv Info, -vvv Debug, -vvvv Trace; not specified logs Error").action(ArgAction::Count))
         .arg(arg!(REPO: -r --repo <REPO> "The root directory of the pkm").env(default_repo))
         .arg(arg!(REFERENCE_FILE: --"repo-reference-file" <REFERENCE_FILE> "Find the root git repo from the reference file"))
-        .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value("zettels").value_hint(ValueHint::DirPath))
-        .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value("tmpl").value_hint(ValueHint::DirPath))
-        .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value("daily").value_hint(ValueHint::DirPath))
-        .arg(arg!(IMG_DIR: --"img-dir" [IMG_DIR] "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value("imgs").value_hint(ValueHint::DirPath))
+        .arg(arg!(ZETTEL_DIR: --"zettel-dir" [ZETTEL_DIR] "The directory where zettels are stored relative to the repo directory").env("PKM_ZETTEL_DIR").default_value(pkm::DEFAULT_ZETTEL_DIR).value_hint(ValueHint::DirPath))
+        .arg(arg!(TEMPLATE_DIR: --"template-dir" [TEMPLATE_DIR] "The directory where templates are stored relative to the repo directory").env("PKM_TEMPLATE_DIR").default_value(pkm::DEFAULT_TEMPLATE_DIR).value_hint(ValueHint::DirPath))
+        .arg(arg!(DAILY_DIR: --"daily-dir" [DAILY_DIR] "The directory where dailys are stored relative to the repo directory").env("PKM_DAILY_DIR").default_value(pkm::DEFAULT_DAILY_DIR).value_hint(ValueHint::DirPath))
+        .arg(arg!(IMG_DIR: --"img-dir" [IMG_DIR] "The directory, relative to the root directory, where images are stored").env("PKM_DAILY_DIR").default_value(pkm::DEFAULT_IMAGE_DIR).value_hint(ValueHint::DirPath))
         .subcommand(
             Command::new("zettel")
                 .about("Create a new zettel")
@@ -121,16 +123,28 @@ fn cli() -> Command {
         .subcommand(
             Command::new("move")
                 .arg(arg!(ZTL: <ZTL>).value_hint(ValueHint::FilePath))
-                .arg(arg!(REPO: <REPO>).value_hint(ValueHint::DirPath))
+                .arg(arg!(REMOTE_REPO: <REMOTE_REPO>).value_hint(ValueHint::DirPath))
                 .about("Move a zettel from one repo to a different repo")
+        )
+        .subcommand(
+            Command::new("resolve")
+                .arg(arg!(ZTL: <ZTL>).value_hint(ValueHint::FilePath))
+                .about("return the path(s) to the defined things")
         )
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    env_logger::init();
-
     let matches = cli().get_matches();
+
+    colog::basic_builder()
+        .filter_level(match matches.get_count("verbose") {
+            0 => LevelFilter::Warn,
+            1 => LevelFilter::Info,
+            2 => LevelFilter::Debug,
+            _ => LevelFilter::Trace,
+        })
+        .init();
 
     let repo = repo_from_reference(
         matches
@@ -140,9 +154,15 @@ async fn main() -> ExitCode {
     .or_else(|| matches.get_one::<String>("REPO").map(PathBuf::from))
     .expect("repo required");
 
-    let pkm = PKMBuilder::new(&repo).parse_args(&matches).build();
+    let pkm = match PKMBuilder::new(&repo) {
+        Err(err) => {
+            error!("{}", err);
+            return ExitCode::FAILURE;
+        }
+        Ok(val) => val,
+    };
 
-    let pkm = match pkm {
+    let pkm = match pkm.parse_args(&matches).build() {
         Err(err) => {
             error!("{}", err);
             return ExitCode::FAILURE;
@@ -159,7 +179,8 @@ async fn main() -> ExitCode {
         Some(("search", sub_matches)) => run_search(sub_matches, &pkm),
         Some(("script", sub_matches)) => run_script(sub_matches, &pkm),
         Some(("image", submatches)) => run_image(submatches, &pkm),
-        Some(("move", submatches)) => run_move(submatches, &pkm),
+        Some(("resolve", submatches)) => run_resolve(submatches, &pkm).await,
+        Some(("move", submatches)) => run_move(submatches, &pkm).await,
         Some(("completion", submatches)) => run_completion(submatches),
         None => run_editor(&matches, &pkm),
         _ => unreachable!(), // If all subcommands are defined above, anything else is unreachable!()
@@ -173,7 +194,66 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_move(args: &ArgMatches, pkm: &PKM) -> Result<()> {}
+async fn run_resolve(args: &ArgMatches, pkm: &PKM) -> Result<()> {
+    let id = args.get_one::<String>("ZTL").expect("required field");
+
+    let mut lsp = pkm.lsp().await?;
+    let ztl_paths = pkm.resolve_path(id, &mut lsp).await?;
+    for ztl_path in ztl_paths {
+        println!("{}", ztl_path.as_path().to_string_lossy())
+    }
+    Ok(())
+}
+
+async fn run_move(args: &ArgMatches, pkm: &PKM) -> Result<()> {
+    let id = args.get_one::<String>("ZTL").expect("required field");
+    let remote = args
+        .get_one::<String>("REMOTE_REPO")
+        .expect("required field");
+
+    let mut lsp = pkm.lsp().await?;
+    let mut ztls = pkm.resolve_path(id, &mut lsp).await?;
+
+    let remote_pkm = PKMBuilder::new(remote)?.build()?;
+
+    let ztl = match ztls.len() {
+        0 => return Err(Error::NotFound(format!("{} is not a valid id", id))),
+        1 => Zettel::new(ztls.remove(0))?,
+        _ => {
+            let mut finder = Finder::new(pkm.root.as_path());
+            for ztl_path in ztls {
+                let ztl = Zettel::new(ztl_path)?;
+                finder.add(
+                    FinderItem::new(ztl.path())
+                        .with_display(Some(
+                            ztl.rel_path(&pkm.zettel_dir)?.as_os_str().to_string_lossy(),
+                        ))
+                        .with_syntax_preview(
+                            ztl.content()
+                                .as_ref()
+                                .map(Deref::deref)
+                                .unwrap_or("no content"),
+                            Some("md"),
+                            None,
+                        )?,
+                )?;
+            }
+
+            let item = match finder.select_one() {
+                Some(item) => item,
+                None => return Ok(()),
+            };
+
+            Zettel::new(item.text().to_string())?
+        }
+    };
+
+    let newztl = ztl.swap_parent_dir(&pkm.zettel_dir, &remote_pkm.zettel_dir)?;
+    newztl.sync()?;
+    ztl.delete()?;
+
+    Ok(())
+}
 
 fn run_image(args: &ArgMatches, pkm: &PKM) -> Result<()> {
     let current_date = Local::now();
@@ -259,7 +339,7 @@ fn run_zettel(sub_matches: &ArgMatches, pkm: &PKM) -> Result<()> {
     let reference = ZettelReference::new(&id, reference_prefix);
     let reference: String = reference.into();
     let mut daily = pkm.daily(&current_date)?;
-    daily.content()?.append(&reference)?;
+    daily.mut_content()?.append(&reference)?;
     daily.sync()?;
 
     if let Some(true) = sub_matches.get_one::<bool>("NO_EDIT") {

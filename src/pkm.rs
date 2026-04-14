@@ -101,7 +101,13 @@ impl PKMBuilder {
             zettel_dir,
         } = self;
 
-        let mut tmpl = if let Some(tmpl_dir) = tmpl_dir {
+        let tmpl_dir = tmpl_dir.unwrap_or_else(|| {
+            let mut tmpl_dir = PathBuf::from(&root);
+            tmpl_dir.push(DEFAULT_TEMPLATE_DIR);
+            tmpl_dir
+        });
+
+        let mut tmpl = if tmpl_dir.is_dir() {
             let mut glob = PathBuf::from(tmpl_dir);
             glob.push("**/*.md");
             Tera::new(glob.to_string_lossy().as_ref())?
@@ -122,6 +128,7 @@ impl PKMBuilder {
         {
             tmpl.add_raw_template("default.md", "# {{ title }}")?;
         }
+        log::debug!("{:?}", tmpl);
 
         Ok(PKM {
             root: root.clone(),

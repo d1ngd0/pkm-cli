@@ -9,7 +9,7 @@ use lsp_types::GotoDefinitionResponse;
 use tera::{Context, Tera};
 
 pub const DEFAULT_IMAGE_DIR: &str = "imgs";
-pub const DEFAULT_TEMPLATE_DIR: &str = "tmpls";
+pub const DEFAULT_TEMPLATE_DIR: &str = "tmpl";
 pub const DEFAULT_ZETTEL_DIR: &str = "zettels";
 pub const DEFAULT_DAILY_DIR: &str = "daily";
 
@@ -119,7 +119,7 @@ impl PKMBuilder {
             .get_template("daily.md")
             .is_err_and(|v| matches!(v.kind, tera::ErrorKind::TemplateNotFound(_)))
         {
-            tmpl.add_raw_template("daily.md", "# {{ title }}")?;
+            tmpl.add_raw_template("daily.md", "# {{ date }}")?;
         }
 
         if tmpl

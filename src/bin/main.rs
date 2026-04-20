@@ -540,6 +540,12 @@ fn repo_from_reference(refer: Option<&str>) -> Option<PathBuf> {
         return None;
     };
 
+    let refer: String = if refer.starts_with("./") {
+        refer.into()
+    } else {
+        format!("./{}", refer)
+    };
+
     let mut buf = PathBuf::from(refer);
     while buf.pop() {
         let mut git_path = buf.clone();
